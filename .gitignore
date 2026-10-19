@@ -1,0 +1,16 @@
+/build*/
+/out/
+/dist/
+/.vs/
+*.user
+__pycache__/
+
+# Local recordings, credentials and editor state must not enter public history.
+*.wav
+*.mp3
+*.flac
+*.pem
+*.key
+.env
+.env.*
+/.idea/

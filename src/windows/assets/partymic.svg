@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+<title>PartyMic — microphone and music</title>
+<defs><linearGradient id="orange" x2="0" y2="1"><stop stop-color="#ff9737"/><stop offset="1" stop-color="#ea580c"/></linearGradient></defs>
+<rect x="12" y="12" width="232" height="232" rx="56" fill="url(#orange)"/>
+<rect x="107" y="54" width="42" height="88" rx="21.0" fill="#ffffff"/>
+<polyline points="91.000,119.000 91.000,136.000 91.000,136.000 91.114,138.903 91.456,141.788 92.022,144.637 92.811,147.434 93.816,150.159 95.033,152.798 96.452,155.332 98.066,157.748 99.865,160.030 101.837,162.163 103.970,164.135 106.252,165.934 108.668,167.548 111.202,168.967 113.841,170.184 116.566,171.189 119.363,171.978 122.212,172.544 125.097,172.886 128.000,173.000 130.903,172.886 133.788,172.544 136.637,171.978 139.434,171.189 142.159,170.184 144.798,168.967 147.332,167.548 149.748,165.934 152.030,164.135 154.163,162.163 156.135,160.030 157.934,157.748 159.548,155.332 160.967,152.798 162.184,150.159 163.189,147.434 163.978,144.637 164.544,141.788 164.886,138.903 165.000,136.000 165.000,119.000" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="128.000,173.000 128.000,195.000" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="108.000,197.000 148.000,197.000" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="58.000,107.000 58.000,131.000" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="76.000,91.000 76.000,147.000" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="180.000,91.000 180.000,147.000" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="198.000,107.000 198.000,131.000" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="205" cy="205" r="21" fill="#ffffff"/>
+<circle cx="205" cy="205" r="15" fill="#0d9488"/>
+</svg>

@@ -1,0 +1,26 @@
+name: Build and test
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with Windows 11 SDK
+        run: cmake -S . -B build -A x64 -DCMAKE_SYSTEM_VERSION=10.0.22621.0
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test audio core
+        run: ctest --test-dir build -C Release --output-on-failure
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PartyMic-win11-x64
+          path: build/Release/PartyMic.exe
+  audio-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --parallel
+      - run: ctest --test-dir build --output-on-failure
