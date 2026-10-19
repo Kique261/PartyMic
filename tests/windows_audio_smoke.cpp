@@ -2,8 +2,10 @@
 // Own child processes produce quiet tones; only scalar levels/spectra are logged.
 #include "windows/audio_engine.h"
 #include "windows/devices.h"
+#include "windows/diagnostics.h"
 #include <audioclient.h>
 #include <avrt.h>
+#include <endpointvolume.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
@@ -104,6 +106,70 @@ int tone(double frequency, const wchar_t *event_name) {
     }
     check(client->Stop(), "Tone stop");
     return 0;
+}
+struct MicState {
+    BOOL muted = FALSE;
+    float volume = 0;
+    std::wstring defaults[3];
+};
+MicState mic_state(const std::wstring& id) {
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    check(CoCreateInstance(__uuidof(MMDeviceEnumerator),nullptr,CLSCTX_ALL,IID_PPV_ARGS(&enumerator)),"Mic state enumerator");
+    ComPtr<IMMDevice> device;check(enumerator->GetDevice(id.c_str(),&device),"Mic state device");
+    ComPtr<IAudioEndpointVolume> volume;
+    check(device->Activate(__uuidof(IAudioEndpointVolume),CLSCTX_ALL,nullptr,reinterpret_cast<void**>(volume.GetAddressOf())),"Read mic endpoint volume");
+    MicState state;
+    check(volume->GetMute(&state.muted),"Read mic mute");check(volume->GetMasterVolumeLevelScalar(&state.volume),"Read mic level");
+    for(int i=0;i<3;++i)state.defaults[i]=default_endpoint_id(eCapture,static_cast<ERole>(i));
+    return state;
+}
+int mic_probe(bool communications) {
+    std::wstring id;
+    for(const auto& e:endpoints(eCapture))if(e.name.find(L"Brio 90")!=std::wstring::npos)id=e.id;
+    if(id.empty())throw std::runtime_error("Brio 90 missing");
+    const auto state=mic_state(id);
+    auto client=endpoint_client(id);
+    if(communications){
+        ComPtr<IAudioClient2> client2;check(client.As(&client2),"Mic IAudioClient2");
+        AudioClientProperties props{};props.cbSize=sizeof(props);props.eCategory=AudioCategory_Communications;
+        check(client2->SetClientProperties(&props),"Independent communications capture category");
+    }
+    WAVEFORMATEX* native=nullptr;check(client->GetMixFormat(&native),"Mic native format");
+    const auto align=native->nBlockAlign;const auto rate=native->nSamplesPerSec;
+    const auto initialized=client->Initialize(AUDCLNT_SHAREMODE_SHARED,0,1000000,0,native,nullptr);
+    CoTaskMemFree(native);check(initialized,"Independent native shared mic initialize");
+    ComPtr<IAudioCaptureClient> capture;check(client->GetService(IID_PPV_ARGS(&capture)),"Independent mic capture service");
+    check(client->Start(),"Independent mic start");
+    unsigned long long frames=0,nonzero=0;
+    const auto end=GetTickCount64()+1500;
+    while(GetTickCount64()<end){
+        for(unsigned packet=0;packet<64;++packet){
+            UINT32 count=0;check(capture->GetNextPacketSize(&count),"Independent mic packet");if(!count)break;
+            BYTE* bytes=nullptr;DWORD flags=0;check(capture->GetBuffer(&bytes,&count,&flags,nullptr,nullptr),"Independent mic read");
+            frames+=count;
+            if(!(flags&AUDCLNT_BUFFERFLAGS_SILENT)&&bytes)
+                for(UINT32 f=0;f<count;++f)
+                    if(std::any_of(bytes+size_t(f)*align,bytes+size_t(f+1)*align,[](BYTE b){return b!=0;}))++nonzero;
+            check(capture->ReleaseBuffer(count),"Independent mic release");
+        }
+        Sleep(3);
+    }
+    check(client->Stop(),"Independent mic stop");capture.Reset();client.Reset();
+    std::wcout<<L"MIC_PROBE communications="<<communications<<L" frames="<<frames<<L" nonzero_frames="<<nonzero
+        <<L" rate="<<rate<<L" endpoint_muted="<<state.muted<<L" volume="<<state.volume<<std::endl;
+    if(frames<rate)throw std::runtime_error("Independent microphone delivered too few frames");
+    return 0;
+}
+void independent_mic_child(bool communications) {
+    wchar_t path[32768];if(!GetModuleFileNameW(nullptr,path,32768))throw std::runtime_error("Probe executable path");
+    std::wstring command=L"\""+std::wstring(path)+L"\" --mic-check "+(communications?L"communications":L"native");
+    STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};
+    if(!CreateProcessW(path,command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process))
+        throw std::runtime_error("Start independent microphone probe");
+    CloseHandle(process.hThread);Handle handle{process.hProcess};
+    if(WaitForSingleObject(handle.value,10000)!=WAIT_OBJECT_0)throw std::runtime_error("Independent microphone probe timed out");
+    DWORD code=1;check(GetExitCodeProcess(handle.value,&code)?S_OK:HRESULT_FROM_WIN32(GetLastError()),"Read mic probe exit");
+    if(code)throw std::runtime_error("Independent microphone probe failed");
 }
 struct ChildTone {
     Handle stop;
@@ -304,7 +370,7 @@ void await_running(AudioEngine &engine) {
     const auto end = GetTickCount64() + 10000;
     while (GetTickCount64() < end) {
         if (!engine.active()) {
-            std::wcerr << engine.status() << std::endl;
+            std::wcout << engine.status() << std::endl;
             throw std::runtime_error("Engine stopped during start");
         }
         if (engine.status().find(L"CABLE Output") != std::wstring::npos)
@@ -329,6 +395,27 @@ AudioSelection selection_for(DWORD pid, const std::wstring &executable, std::wst
     require(!selection.mic_id.empty(), "Brio 90 microphone found");
     require(!selection.output_id.empty() && !capture.empty(), "VB-CABLE stereo endpoints found");
     return selection;
+}
+int handoff_test() {
+    ChildTone source(997);std::wstring capture;
+    const auto selection=selection_for(source.process.dwProcessId,L"windows_audio_smoke.exe",capture);
+    const auto before=mic_state(selection.mic_id);
+    independent_mic_child(false);independent_mic_child(true);
+    std::wcout<<L"PASS Separate native and communications capture before mixing"<<std::endl;
+    AudioEngine engine;engine.start(selection);await_running(engine);
+    independent_mic_child(false);independent_mic_child(true);
+    std::wcout<<L"PASS Separate native and communications capture while mixing"<<std::endl;
+    const auto requested=GetTickCount64();engine.request_stop();
+    while(engine.active()&&GetTickCount64()-requested<5000)Sleep(10);
+    require(!engine.active(),"Cooperative stop finishes within 5 seconds");engine.stop();
+    std::wcout<<L"stop_elapsed_ms="<<GetTickCount64()-requested<<std::endl;
+    independent_mic_child(false);independent_mic_child(true);
+    const auto after=mic_state(selection.mic_id);
+    require(before.muted==after.muted&&std::abs(before.volume-after.volume)<0.00001f,
+        "Microphone endpoint mute and volume unchanged");
+    for(int i=0;i<3;++i)require(before.defaults[i]==after.defaults[i],"Default capture role unchanged");
+    source.finish();
+    std::wcout<<L"ALL CROSS-PROCESS MICROPHONE HANDOFF CHECKS PASSED"<<std::endl;return 0;
 }
 int player_test(const std::wstring &executable, unsigned seconds, DWORD explicit_pid = 0,
                 bool diagnostic = false) {
@@ -549,6 +636,10 @@ int wmain(int argc, wchar_t **argv) {
     _setmode(_fileno(stdout), _O_U8TEXT);
     try {
         ComScope com;
+        if (argc == 3 && std::wstring(argv[1]) == L"--mic-check")
+            return mic_probe(std::wstring(argv[2]) == L"communications");
+        if (argc == 2 && std::wstring(argv[1]) == L"--handoff")
+            return handoff_test();
         if (argc == 4 && std::wstring(argv[1]) == L"--tone")
             return tone(std::stod(argv[2]), argv[3]);
         for (EDataFlow flow : {eRender, eCapture}) {

@@ -16,9 +16,19 @@ struct AudioSelection {
 
 class AudioEngine {
 public:
+    AudioEngine();
     ~AudioEngine();
     void start(AudioSelection selection);
     void stop();
+    // UI uses cooperative requests and polls active(), never joins a live worker.
+    void request_stop() noexcept;
+    bool stopping() const { return stop_requested_.load() && active(); }
+    unsigned long long progress_tick() const { return progress_tick_.load(); }
+    unsigned long long mic_frames() const { return mic_frames_.load(); }
+    unsigned long long music_frames() const { return music_frames_.load(); }
+    unsigned long long mic_signal_frames() const { return mic_signal_frames_.load(); }
+    unsigned long long rendered_frames() const { return rendered_frames_.load(); }
+    const char* stage() const;
     void settings(const MixSettings& value);
     MixSettings settings() const;
     std::wstring status() const;
@@ -44,10 +54,17 @@ public:
     unsigned render_buffer_frames() const { return render_buffer_frames_.load(); }
     bool mmcss_registered() const { return mmcss_registered_.load(); }
 private:
+    enum class Stage { idle, validate, output_open, mic_open, music_open, prefill,
+        music_read, mic_read, padding, mixing, output_write, release_music, release_mic, release_output, released };
+    void mark(Stage stage) noexcept;
     void run(AudioSelection selection);
     void set_status(std::wstring text);
     std::thread worker_;
     HANDLE stop_event_ = nullptr;
+    std::atomic<bool> stop_requested_ = false;
+    std::atomic<Stage> stage_{Stage::idle};
+    std::atomic<unsigned long long> progress_tick_ = 0, mic_frames_ = 0, music_frames_ = 0;
+    std::atomic<unsigned long long> mic_signal_frames_ = 0, rendered_frames_ = 0;
     std::atomic<bool> active_ = false;
     std::atomic<float> music_level_ = 0, mic_level_ = 0, output_level_ = 0, duck_gain_ = 1;
     std::atomic<unsigned long long> dropped_frames_ = 0;

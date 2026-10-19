@@ -3,12 +3,14 @@
 #include "windows/preview.h"
 #include "windows/page_transition.h"
 #include "windows/ui_theme.h"
+#include "windows/diagnostics.h"
 #include <algorithm>
 #include <cmath>
 #include <commctrl.h>
 #include <cwctype>
 #include <exception>
 #include <shellapi.h>
+#include <psapi.h>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -35,6 +37,7 @@ enum : int {
     PreviewOutput,
     PreviewVolume,
     OpenRecordings,
+    OpenLogs,
     NavMix = 201,
     NavRecord,
     NavGuide,
@@ -73,6 +76,86 @@ class App {
     ui::PageTransition page_transition;
     ULONGLONG badge_started = 0;
     bool page_moving = false, badge_moving = false;
+    bool closing = false;
+    ULONGLONG last_settings_log = 0;
+    bool last_mic_mute = false, last_music_mute = false;
+    ULONGLONG close_started = 0;
+    std::wstring pending_playback;
+    std::atomic<bool> monitor_quit{false};
+    std::atomic<ULONGLONG> ui_tick{0};
+    std::thread monitor_worker;
+    struct DeviceLists {
+        std::vector<Application> apps;
+        std::vector<Endpoint> mics, renders;
+        std::wstring default_mic, default_speaker;
+        std::string error;
+    } next_devices;
+    std::thread refresh_worker;
+    std::atomic<bool> refresh_done{false};
+    bool refreshing = false;
+    std::wstring mixed_capture_id;
+    void start_monitor() {
+        ui_tick = GetTickCount64();
+        monitor_worker = std::thread([this] {
+          try {
+            auto next_report = GetTickCount64();
+            bool audio_stalled = false, ui_stalled = false, preview_stalled = false;
+            auto last_mic = engine.mic_frames(), mic_tick = GetTickCount64();
+            while (!monitor_quit) {
+                const auto now = GetTickCount64();
+                // A worker may publish a newer tick after this sample's 'now'.
+                // Saturate instead of unsigned wraparound/spurious watchdog stops.
+                const auto age = [now](ULONGLONG tick) {return now > tick ? now - tick : 0ULL;};
+                const bool stalled = engine.active() && age(engine.progress_tick()) > 20000;
+                if (stalled && !audio_stalled) {
+                    diagnostics::write("watchdog.audio.stall", std::string("stage=") + engine.stage());
+                    engine.request_stop();
+                }
+                audio_stalled = stalled;
+                const bool ui_wait = age(ui_tick.load()) > 5000;
+                if (ui_wait != ui_stalled) diagnostics::write(ui_wait ? "watchdog.ui.stall" : "watchdog.ui.resumed");
+                ui_stalled = ui_wait;
+                const bool preview_wait = preview.busy() && age(preview.progress_tick()) > 20000;
+                if (preview_wait && !preview_stalled) {
+                    diagnostics::write("watchdog.preview.stall");preview.request_stop();
+                }
+                preview_stalled = preview_wait;
+                const auto frames = engine.mic_frames();
+                if (!engine.active() || frames != last_mic) { last_mic = frames;mic_tick = now; }
+                if (engine.active() && frames && now - mic_tick > 15000 && !engine.stopping()) {
+                    diagnostics::write("watchdog.microphone.no_packets", "requesting_cooperative_stop=1");
+                    engine.request_stop();
+                }
+                if (now >= next_report) {
+                    PROCESS_MEMORY_COUNTERS memory{}; memory.cb = sizeof(memory);
+                    K32GetProcessMemoryInfo(GetCurrentProcess(), &memory, sizeof(memory));
+                    DWORD handles = 0;GetProcessHandleCount(GetCurrentProcess(), &handles);
+                    diagnostics::write("runtime.health", std::string("engine=") + std::to_string(engine.active()) +
+                        " stage=" + engine.stage() + " audio_age_ms=" + std::to_string(engine.active() ? age(engine.progress_tick()) : 0) +
+                        " ui_age_ms=" + std::to_string(age(ui_tick.load())) + " preview=" + std::to_string(preview.busy()) +
+                        " handles=" + std::to_string(handles) + " gdi=" + std::to_string(GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS)) +
+                        " private_bytes=" + std::to_string(memory.PagefileUsage) +
+                        " mic_frames=" + std::to_string(frames) + " mic_signal_frames=" + std::to_string(engine.mic_signal_frames()) +
+                        " music_frames=" + std::to_string(engine.music_frames()) + " rendered_frames=" + std::to_string(engine.rendered_frames()) +
+                        " music_starved=" + std::to_string(engine.music_starved_frames()) + " mic_starved=" + std::to_string(engine.mic_starved_frames()) +
+                        " dropped=" + std::to_string(engine.dropped_frames()) + " mic_discontinuities=" + std::to_string(engine.mic_discontinuities()) +
+                        " music_discontinuities=" + std::to_string(engine.music_discontinuities()) + " max_wake_us=" + std::to_string(engine.max_wake_gap_us()));
+                    next_report = now + 15000;
+                }
+                Sleep(500);
+            }
+          } catch (const std::exception& error) {diagnostics::write("watchdog.error",error.what());}
+            catch (...) {diagnostics::write("watchdog.error","unknown_exception");}
+        });
+    }
+    void request_close() {
+        if (closing) return;
+        diagnostics::write("ui.close.request");
+        closing = true;close_started = GetTickCount64();pending_playback.clear();
+        preview.request_stop();engine.request_stop();
+        stop_motion();
+        SetWindowTextW(window,L"PartyMic · 正在释放音频设备…");
+    }
     void update_icons() {
         auto load = [&](int w, int h) {
             return static_cast<HICON>(
@@ -131,6 +214,9 @@ class App {
             KillTimer(window, 2);
     }
     ~App() {
+        monitor_quit = true;
+        if (monitor_worker.joinable()) monitor_worker.join();
+        if (refresh_worker.joinable()) refresh_worker.join();
         page_transition.stop();
         preview.stop();
         engine.stop();
@@ -389,7 +475,7 @@ class App {
         ui::line(dc, px(24), px(base), px(196), px(base), ui::border);
         ui::icon(dc, ui::Icon::Headphones, rect(26, base + 23, 18, 18, false), ui::teal);
         txt(L"本地音频 · 随时可控", 54, base + 19, 150, 26, small_font, ui::muted, false);
-        txt(L"PartyMic  0.5.3", 26, base + 67, 180, 24, small_font, ui::muted, false);
+        txt(L"PartyMic  0.5.4", 26, base + 67, 180, 24, small_font, ui::muted, false);
         const int delta = logical_width() - design_width;
         const wchar_t *titles[] = {L"混音工作台", L"录音与试听", L"使用指南"};
         const wchar_t *subtitles[] = {L"喜欢的音乐，和你的声音一起出发。",
@@ -500,6 +586,7 @@ class App {
         nav_mix = button(L"混音工作台", 14, 154, 192, 44, NavMix, 7, ui::Kind::Nav, ui::Icon::Mix);
         nav_record = button(L"录音与试听", 14, 206, 192, 44, NavRecord, 7, ui::Kind::Nav, ui::Icon::Mic);
         nav_guide = button(L"使用指南", 14, 258, 192, 44, NavGuide, 7, ui::Kind::Nav, ui::Icon::Book);
+        button(L"打开日志文件夹", 24, 326, 172, 36, OpenLogs, 7, ui::Kind::Neutral, ui::Icon::Folder);
         ui::selected(nav_mix, true);
         refresh_button =
             button(L"刷新设备", 952, 120, 136, 32, Refresh, 1, ui::Kind::Neutral, ui::Icon::Refresh, Right);
@@ -548,6 +635,7 @@ class App {
         refresh();
         update();
         SetTimer(window, 1, 80, nullptr);
+        start_monitor();
     }
     static int selection(HWND combo) { return int(SendMessageW(combo, CB_GETCURSEL, 0, 0)); }
     static void item(HWND combo, const std::wstring &name) {
@@ -562,9 +650,38 @@ class App {
             SetWindowTextW(h, text.c_str());
     }
     void refresh() {
+        if (refreshing || closing || engine.active() || preview.busy()) return;
+        if (refresh_worker.joinable()) refresh_worker.join();
+        refreshing = true;refresh_done = false;
+        diagnostics::write("devices.refresh.begin");
+        try {
+            refresh_worker = std::thread([this] {
+                DeviceLists value;
+                try {
+                    const auto hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                    partymic::check(hr,"Device refresh COM");
+                    struct Uninitialize { ~Uninitialize() { CoUninitialize(); } } com;
+                    value.apps = audio_applications();value.mics = endpoints(eCapture);value.renders = endpoints(eRender);
+                    value.default_mic = default_endpoint_id(eCapture,eCommunications);
+                    value.default_speaker = default_endpoint_id(eRender,eMultimedia);
+                } catch(const std::exception& error) {value.error = error.what();}
+                catch(...) {value.error = "Unknown device refresh error";}
+                next_devices = std::move(value);refresh_done = true;
+            });
+        } catch (...) {refreshing = false;throw;}
+    }
+    void complete_refresh() {
+        if (!refreshing || !refresh_done) return;
+        refresh_worker.join();refreshing = false;
+        auto value = std::move(next_devices);
+        if (!value.error.empty()) {
+            diagnostics::write("devices.refresh.error",value.error);
+            MessageBoxA(window,value.error.c_str(),"PartyMic",MB_OK|MB_ICONERROR);return;
+        }
+        diagnostics::write("devices.refresh.end", "applications="+std::to_string(value.apps.size())+" capture_endpoints="+std::to_string(value.mics.size()));
         DWORD old_pid = 0;
         std::wstring old_mic, old_cable, old_speaker;
-        const auto default_mic = default_endpoint_id(eCapture, eCommunications);
+        const auto& default_mic = value.default_mic;
         int index = selection(music_combo);
         if (index >= 0 && static_cast<std::size_t>(index) < applications.size())
             old_pid = applications[index].pid;
@@ -578,9 +695,12 @@ class App {
         if (index >= 0 && static_cast<std::size_t>(index) < speakers.size())
             old_speaker = speakers[index].id;
         // Read everything before replacing the visible list, preserving it on failure.
-        auto next_apps = audio_applications();
-        auto next_mics = endpoints(eCapture);
-        auto renders = endpoints(eRender);
+        auto next_apps = std::move(value.apps);
+        auto next_mics = std::move(value.mics);
+        auto renders = std::move(value.renders);
+        mixed_capture_id.clear();
+        for (const auto& endpoint : next_mics)
+            if (endpoint.name.find(L"CABLE Output") != std::wstring::npos) {mixed_capture_id = endpoint.id;break;}
         std::vector<Endpoint> next_cables, next_speakers;
         for (const auto &endpoint : renders)
             if (is_virtual_cable(endpoint.name))
@@ -619,7 +739,7 @@ class App {
             if (cables[i].id == old_cable)
                 cable_index = static_cast<int>(i);
         }
-        const auto default_speaker = default_endpoint_id(eRender, eMultimedia);
+        const auto& default_speaker = value.default_speaker;
         for (std::size_t i = 0; i < speakers.size(); ++i) {
             item(preview_output, speakers[i].name);
             if (speakers[i].id == (old_speaker.empty() ? default_speaker : old_speaker))
@@ -649,6 +769,13 @@ class App {
         set_text(duck_value,
                  (std::to_wstring(static_cast<int>(settings.duck_floor * 100 + 0.5f)) + L"%").c_str());
         engine.settings(settings);
+        const auto now = GetTickCount64();
+        if (now - last_settings_log >= 500 || last_mic_mute != settings.mic_muted || last_music_mute != settings.music_muted) {
+            diagnostics::write("ui.mix_settings", "music_gain=" + std::to_string(settings.music_gain) +
+                " mic_gain=" + std::to_string(settings.mic_gain) + " music_muted=" + std::to_string(settings.music_muted) +
+                " mic_muted=" + std::to_string(settings.mic_muted) + " ducking=" + std::to_string(settings.ducking));
+            last_settings_log = now;last_mic_mute = settings.mic_muted;last_music_mute = settings.music_muted;
+        }
         set_text(music_value, (std::to_wstring(music) + L"%").c_str());
         set_text(mic_value, (std::to_wstring(mic) + L"%").c_str());
     }
@@ -679,7 +806,7 @@ class App {
             read_settings();
             break;
         case Start: {
-            if (preview.busy())
+            if (closing || refreshing || engine.active() || preview.busy() || !pending_playback.empty())
                 return;
             int a = selection(music_combo), m = selection(mic_combo), c = selection(cable_combo);
             if (a < 0 || m < 0 || c < 0 || static_cast<std::size_t>(a) >= applications.size() ||
@@ -697,11 +824,11 @@ class App {
         }
         case Stop:
             if (preview.recording())
-                preview.stop();
-            engine.stop();
+                preview.request_stop();
+            engine.request_stop();
             break;
         case Record: {
-            if (preview.busy())
+            if (closing || refreshing || engine.stopping() || preview.busy() || !pending_playback.empty())
                 return;
             const bool mixed = selection(record_source) == 1;
             std::wstring capture_id;
@@ -715,11 +842,7 @@ class App {
                 if (c < 0 || static_cast<std::size_t>(c) >= cables.size())
                     return;
                 // Only the official standard stereo VB-CABLE pair is supported.
-                for (const auto &e : endpoints(eCapture))
-                    if (e.name.find(L"CABLE Output") != std::wstring::npos) {
-                        capture_id = e.id;
-                        break;
-                    }
+                capture_id = mixed_capture_id;
             } else {
                 const auto m = selection(mic_combo);
                 if (m >= 0 && static_cast<std::size_t>(m) < microphones.size())
@@ -734,19 +857,19 @@ class App {
             break;
         }
         case StopPreview:
-            preview.stop();
+            pending_playback.clear();preview.request_stop();
             break;
         case PlayPreview: {
-            if (preview.busy())
+            if (closing || refreshing || preview.busy() || !pending_playback.empty())
                 return;
             const auto p = selection(preview_output);
             if (p < 0 || static_cast<std::size_t>(p) >= speakers.size()) {
                 MessageBoxW(window, L"请选择耳机、HDMI 或扬声器作为试听输出。", L"试听输出", MB_OK);
                 return;
             }
-            engine.stop();
+            engine.request_stop();
             read_settings();
-            preview.play(speakers[p].id);
+            pending_playback = speakers[p].id;
             break;
         }
         case OpenRecordings: {
@@ -755,17 +878,42 @@ class App {
                 ShellExecuteW(window, L"open", file.parent_path().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             break;
         }
+        case OpenLogs: {
+            const auto path=diagnostics::folder();std::filesystem::create_directories(path);
+            ShellExecuteW(window,L"open",path.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+            break;
+        }
         }
         update();
     }
     void update() {
+        ui_tick = GetTickCount64();
+        if (closing) {
+            if (!engine.active() && !preview.busy() && (!refreshing || refresh_done)) {
+                diagnostics::write("ui.close.ready", "audio_workers_finished=1");
+                DestroyWindow(window);return;
+            }
+            if (GetTickCount64() - close_started >= 15000) {
+                // A blocked device/RPC cannot be cancelled safely with thread
+                // termination. On an explicit user close only, exit our whole
+                // process after giving cooperative cleanup 15 seconds.
+                diagnostics::write("app.exit.timeout", std::string("stage=") + engine.stage() + " own_process_exit=1");
+                diagnostics::flush(300);
+                TerminateProcess(GetCurrentProcess(), 3);
+            }
+            return;
+        }
+        complete_refresh();
+        if (!pending_playback.empty() && !engine.active() && !preview.busy()) {
+            auto id = std::move(pending_playback);pending_playback.clear();preview.play(std::move(id));
+        }
         const bool active = engine.active();
         if (active != previous_active) {
             previous_active = active;
             begin_badge_motion();
             InvalidateRect(window, nullptr, FALSE);
         }
-        const bool preview_busy = preview.busy();
+        const bool preview_busy = preview.busy() || !pending_playback.empty();
         static int old_preview_mode = 0;
         const int mode = preview.recording() ? 1 : (preview.playing() ? 2 : 0);
         if (old_preview_mode != mode) {
@@ -775,10 +923,10 @@ class App {
             InvalidateRect(window, &badge, FALSE);
         }
         for (HWND control : {music_combo, mic_combo, cable_combo, refresh_button, start})
-            EnableWindow(control, !active && !preview_busy);
-        EnableWindow(stop, active);
+            EnableWindow(control, !refreshing && !active && !preview_busy);
+        EnableWindow(stop, active && !engine.stopping());
         EnableWindow(record_source, !preview_busy);
-        EnableWindow(record_button, !preview_busy && !microphones.empty());
+        EnableWindow(record_button, !refreshing && !engine.stopping() && !preview_busy && !microphones.empty());
         EnableWindow(preview_stop, preview_busy);
         EnableWindow(play_button, !preview_busy && !preview.last_file().empty() && !speakers.empty());
         EnableWindow(preview_output, !preview_busy);
@@ -786,8 +934,12 @@ class App {
         EnableWindow(duck_slider, SendMessageW(duck, BM_GETCHECK, 0, 0) == BST_CHECKED);
         set_text(preview_status, preview.status().c_str());
         std::wstring message = engine.status();
-        if (active)
+        if (engine.stopping())
+            message = L"正在释放麦克风与虚拟声卡…";
+        else if (active)
             message = L"正在混音 → CABLE Output";
+        else if (refreshing)
+            message = L"正在刷新设备与软件…";
         else if (cables.empty())
             message = L"请安装 VB-CABLE 后刷新。";
         else if (applications.empty())
@@ -830,7 +982,9 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lpar
             app->create();
             return 0;
         case WM_COMMAND:
+            diagnostics::write("ui.command.begin","id=" + std::to_string(LOWORD(wparam)));
             app->command(LOWORD(wparam), HIWORD(wparam));
+            diagnostics::write("ui.command.end","id=" + std::to_string(LOWORD(wparam)));
             return 0;
         case WM_HSCROLL:
             app->read_settings();
@@ -921,9 +1075,7 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lpar
         case WM_ERASEBKGND:
             return 1;
         case WM_CLOSE:
-            app->preview.stop();
-            app->engine.stop();
-            DestroyWindow(window);
+            app->request_close();
             return 0;
         case WM_DESTROY:
             KillTimer(window, 1);
@@ -932,6 +1084,7 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lpar
             return 0;
         }
     } catch (const std::exception &error) {
+        diagnostics::write("ui.error", error.what());
         MessageBoxA(window, error.what(), "PartyMic", MB_OK | MB_ICONERROR);
         if (message == WM_CREATE)
             return -1;
@@ -941,6 +1094,7 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lpar
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
+    diagnostics::start("0.5.4");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(initialized))
@@ -1001,10 +1155,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         if (result == -1)
             exit_code = 1;
     } catch (const std::exception &error) {
+        diagnostics::write("app.startup.error",error.what());
         MessageBoxA(nullptr, error.what(), "PartyMic startup failed", MB_OK | MB_ICONERROR);
         exit_code = 1;
     }
     Gdiplus::GdiplusShutdown(gdiplus);
     CoUninitialize();
+    diagnostics::stop();
     return exit_code;
 }

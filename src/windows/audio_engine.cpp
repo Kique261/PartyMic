@@ -1,14 +1,18 @@
 #include "windows/audio_engine.h"
 #include "windows/devices.h"
 #include "windows/audio_activation.h"
+#include "windows/diagnostics.h"
 
 #include <audioclient.h>
 #include <avrt.h>
 #include <mmdeviceapi.h>
+#include <endpointvolume.h>
+#include <audiopolicy.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -72,7 +76,11 @@ public:
         }) {}
     ~ProcessWatch() {
         SetEvent(cancel_);
-        if (worker_.joinable()) worker_.join();
+        if (worker_.joinable()) {
+            diagnostics::write("source_watcher.join.begin");
+            worker_.join();
+            diagnostics::write("source_watcher.join.end");
+        }
     }
     void check_source() const {
         switch (state_.load()) {
@@ -186,6 +194,16 @@ ComPtr<IMMDevice> device_by_id(const std::wstring& id, EDataFlow required_flow) 
 
 ComPtr<IAudioClient> activate_endpoint(const std::wstring& id, EDataFlow flow) {
     auto device = device_by_id(id, flow);
+    if (flow == eCapture) {
+        ComPtr<IAudioEndpointVolume> volume;
+        if (SUCCEEDED(device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+            reinterpret_cast<void**>(volume.GetAddressOf())))) {
+            BOOL muted = FALSE;float level = 0;
+            const auto mute_hr = volume->GetMute(&muted), level_hr = volume->GetMasterVolumeLevelScalar(&level);
+            diagnostics::write("microphone.endpoint.state", "read_only=1 mute_hr=" + std::to_string(mute_hr) +
+                " level_hr=" + std::to_string(level_hr) + " muted=" + std::to_string(muted) + " level=" + std::to_string(level));
+        }
+    }
     if (flow == eRender) {
         ComPtr<IPropertyStore> properties;
         check(device->OpenPropertyStore(STGM_READ, &properties), "Read virtual cable properties");
@@ -218,6 +236,8 @@ ComPtr<IAudioClient> activate_endpoint(const std::wstring& id, EDataFlow flow) {
 }
 
 struct Stream {
+    const char* name;
+    explicit Stream(const char* value) : name(value) {}
     Event ready;
     ComPtr<IAudioClient> client;
     ComPtr<IAudioCaptureClient> capture;
@@ -225,18 +245,30 @@ struct Stream {
     UINT32 buffer_frames = 0;
     bool started = false;
     unsigned long long discontinuities = 0, silent_frames = 0;
+    unsigned long long captured_frames = 0, signal_frames = 0;
     ~Stream() {
         if (started && render) {
             try { finish_render(); } catch (...) {}
         }
-        stop();
+        close(name);
     }
 
     void stop() noexcept {
         if (!started) return;
-        client->Stop();
-        client->Reset();
+        const auto stopped = client->Stop();
+        const auto reset = client->Reset();
+        if (FAILED(stopped) || FAILED(reset))
+            diagnostics::write("stream.stop.error", std::string(name) + " stop_hr=" + std::to_string(stopped) + " reset_hr=" + std::to_string(reset));
         started = false;
+    }
+    void close(const char* label) noexcept {
+        if (!client) return;
+        diagnostics::write("stream.release.begin", label);
+        stop();
+        // Release all service references on their owning audio thread before
+        // the parent client and before waiting for the process watcher/output.
+        capture.Reset(); render.Reset(); client.Reset();
+        diagnostics::write("stream.release.end", label);
     }
 
     void finish_render() {
@@ -288,6 +320,13 @@ struct Stream {
             check(capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr), "Read capture audio");
             if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) ++discontinuities;
             if (flags & AUDCLNT_BUFFERFLAGS_SILENT) silent_frames += frames;
+            captured_frames += frames;
+            if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data) {
+                const auto* samples = reinterpret_cast<const float*>(data);
+                for (UINT32 i = 0; i < frames; ++i)
+                    if (std::abs(samples[i * channels]) > 0.00001f || std::abs(samples[i * channels + 1]) > 0.00001f)
+                        ++signal_frames;
+            }
             queue.push(reinterpret_cast<const float*>(data), frames,
                 (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0);
             check(capture->ReleaseBuffer(frames), "Release capture packet");
@@ -305,7 +344,16 @@ std::wstring error_message(const char* text) {
 }
 }
 
-AudioEngine::~AudioEngine() { stop(); }
+AudioEngine::AudioEngine() : stop_event_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
+    if (!stop_event_) check(HRESULT_FROM_WIN32(GetLastError()), "Create stop event");
+}
+AudioEngine::~AudioEngine() { stop(); CloseHandle(stop_event_); }
+void AudioEngine::mark(Stage stage) noexcept { stage_ = stage; progress_tick_ = GetTickCount64(); }
+const char* AudioEngine::stage() const {
+    static constexpr const char* names[] = {"idle", "validate_source", "open_output", "open_microphone", "open_process_loopback", "prefill",
+        "read_music", "read_microphone", "read_padding", "mix", "write_output", "release_music", "release_microphone", "release_output", "released"};
+    return names[static_cast<unsigned>(stage_.load())];
+}
 void AudioEngine::set_status(std::wstring text) {
     std::lock_guard lock(mutex_);
     status_ = std::move(text);
@@ -316,8 +364,15 @@ MixSettings AudioEngine::settings() const { std::lock_guard lock(mutex_); return
 
 void AudioEngine::start(AudioSelection selection) {
     stop();
-    stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!stop_event_) check(HRESULT_FROM_WIN32(GetLastError()), "Create stop event");
+    ResetEvent(stop_event_); stop_requested_ = false;
+    mic_frames_ = music_frames_ = mic_signal_frames_ = rendered_frames_ = 0;
+    mark(Stage::validate);
+    diagnostics::write("engine.start", L"source=" + selection.music_executable + L" pid=" + std::to_wstring(selection.music_pid) +
+        L" microphone=" + selection.mic_id + L" output=" + selection.output_id);
+    const auto controls = settings();
+    diagnostics::write("engine.initial_settings", "music_gain=" + std::to_string(controls.music_gain) +
+        " mic_gain=" + std::to_string(controls.mic_gain) + " music_muted=" + std::to_string(controls.music_muted) +
+        " mic_muted=" + std::to_string(controls.mic_muted) + " ducking=" + std::to_string(controls.ducking));
     active_ = true;
     dropped_frames_ = 0;
     music_starved_frames_ = mic_starved_frames_ = 0;
@@ -328,12 +383,15 @@ void AudioEngine::start(AudioSelection selection) {
     mmcss_registered_ = false;
     set_status(L"正在初始化音频设备…");
     try { worker_ = std::thread(&AudioEngine::run, this, std::move(selection)); }
-    catch (...) { active_ = false; CloseHandle(stop_event_); stop_event_ = nullptr; throw; }
+    catch (...) { active_ = false; throw; }
+}
+void AudioEngine::request_stop() noexcept {
+    if (active_ && !stop_requested_.exchange(true)) diagnostics::write("engine.stop.request", stage());
+    SetEvent(stop_event_);
 }
 void AudioEngine::stop() {
-    if (stop_event_) SetEvent(stop_event_);
+    request_stop();
     if (worker_.joinable()) worker_.join();
-    if (stop_event_) { CloseHandle(stop_event_); stop_event_ = nullptr; }
     active_ = false;
     music_level_ = mic_level_ = output_level_ = 0;
 }
@@ -345,12 +403,31 @@ void AudioEngine::run(AudioSelection selection) {
         mmcss_registered_ = audio_task.handle != nullptr;
         if (!selection.music_pid || !process_matches(selection.music_pid, selection.music_executable))
             throw std::runtime_error("Music application changed or exited. Refresh and select it again.");
-        Stream music, microphone, output;
+        // Declare the watcher first so every stream releases before its join,
+        // including exception unwinding after a device/source failure.
+        ProcessWatch source_watch(selection.music_pid, selection.music_executable,
+                                  stop_event_, max_process_check_us_);
+        Stream output("output"), music("music"), microphone("microphone");
+        mark(Stage::output_open);
         output.client = activate_endpoint(selection.output_id, eRender);
         output.initialize(false, false);
         render_buffer_frames_ = output.buffer_frames;
+        diagnostics::write("stream.output.ready", "buffer_frames=" + std::to_string(output.buffer_frames));
+        mark(Stage::mic_open);
         microphone.client = activate_endpoint(selection.mic_id, eCapture);
         microphone.initialize(true, false);
+        ComPtr<ISimpleAudioVolume> mic_volume;
+        if (SUCCEEDED(microphone.client->GetService(IID_PPV_ARGS(&mic_volume)))) {
+            BOOL muted = FALSE;float level = 0;
+            const auto a = mic_volume->GetMute(&muted), b = mic_volume->GetMasterVolume(&level);
+            diagnostics::write("microphone.session.state", "read_only=1 mute_hr=" + std::to_string(a) +
+                " level_hr=" + std::to_string(b) + " muted=" + std::to_string(muted) + " level=" + std::to_string(level));
+        }
+        // This diagnostic interface is also a session reference. Do not keep it
+        // alive across microphone.close() or while draining the output cable.
+        mic_volume.Reset();
+        diagnostics::write("stream.microphone.ready", "shared=1 frames=" + std::to_string(microphone.buffer_frames));
+        mark(Stage::music_open);
         music.client = activate_process(selection.music_pid, stop_event_);
         if (music.client && WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
             music.initialize(true, true);
@@ -359,10 +436,9 @@ void AudioEngine::run(AudioSelection selection) {
             Mixer mixer;
             std::vector<float> music_samples(output.buffer_frames * channels);
             std::vector<float> mic_samples(output.buffer_frames * channels);
-            ProcessWatch source_watch(selection.music_pid, selection.music_executable,
-                                      stop_event_, max_process_check_us_);
             music.start();
             microphone.start();
+            mark(Stage::prefill);
             // Process loopback can deliver its first packet later than the mic.
             // Wait for actual queued frames, rather than assuming 30 ms elapsed
             // means both captures are ready. A paused source must still start.
@@ -383,6 +459,7 @@ void AudioEngine::run(AudioSelection selection) {
             check(output.render->GetBuffer(output.buffer_frames, &initial), "Prime output buffer");
             check(output.render->ReleaseBuffer(output.buffer_frames, AUDCLNT_BUFFERFLAGS_SILENT), "Prime output silence");
             output.start();
+            diagnostics::write("engine.running", "shared=1 sample_rate=48000 channels=2");
             set_status(L"正在混音 → CABLE Output。请在语音客户端选择该录音设备。配戴耳机避免回声。");
             HANDLE waits[] = {stop_event_, music.ready, microphone.ready, output.ready};
             auto last_wake = microseconds();
@@ -396,19 +473,25 @@ void AudioEngine::run(AudioSelection selection) {
                 // Never reattach to a new PID automatically; restart is explicit.
                 source_watch.check_source();
                 const auto drain_begin = microseconds();
+                mark(Stage::music_read);
                 music.drain(music_queue);
+                mark(Stage::mic_read);
                 microphone.drain(mic_queue);
+                music_frames_ = music.captured_frames; mic_frames_ = microphone.captured_frames;
+                mic_signal_frames_ = microphone.signal_frames;
                 update_max(max_capture_drain_us_, microseconds() - drain_begin);
                 music_discontinuities_ = music.discontinuities;
                 mic_discontinuities_ = microphone.discontinuities;
                 music_silent_frames_ = music.silent_frames;
                 UINT32 padding = 0;
+                mark(Stage::padding);
                 check(output.client->GetCurrentPadding(&padding), "Read output padding");
                 if (padding > output.buffer_frames) throw std::runtime_error("Invalid output padding");
                 if (!padding) ++empty_render_wakes_;
                 const auto frames = output.buffer_frames - padding;
                 if (!frames) continue;
                 const auto render_begin = microseconds();
+                mark(Stage::mixing);
                 auto m = std::span<float>(music_samples.data(), frames * channels);
                 auto v = std::span<float>(mic_samples.data(), frames * channels);
                 const auto controls = settings();
@@ -419,10 +502,12 @@ void AudioEngine::run(AudioSelection selection) {
                 if (!controls.mic_muted && controls.mic_gain > 0)
                     mic_starved_frames_ += missing_mic;
                 BYTE* data = nullptr;
+                mark(Stage::output_write);
                 check(output.render->GetBuffer(frames, &data), "Acquire virtual cable output");
                 const auto levels = mixer.mix(m, v,
                     {reinterpret_cast<float*>(data), frames * channels}, controls);
                 check(output.render->ReleaseBuffer(frames, 0), "Write virtual cable output");
+                rendered_frames_ += frames;
                 update_max(max_render_us_, microseconds() - render_begin);
                 music_level_ = levels.music;
                 mic_level_ = levels.mic;
@@ -430,17 +515,23 @@ void AudioEngine::run(AudioSelection selection) {
                 duck_gain_ = levels.duck_gain;
                 dropped_frames_ = music_queue.dropped_frames() + mic_queue.dropped_frames();
             }
-            music.stop();
-            microphone.stop();
+            mark(Stage::release_mic); microphone.close("microphone");
+            mark(Stage::release_music); music.close("music");
+            mark(Stage::release_output);
             output.finish_render();
+            output.close("output");
         }
         set_status(L"已停止。虚拟麦克风不再接收本程序的音频。");
     } catch (const std::exception& error) {
+        diagnostics::write("engine.error", std::string("stage=") + stage() + " " + error.what());
         set_status(L"音频已停止：" + error_message(error.what()));
     } catch (...) {
+        diagnostics::write("engine.error", std::string("stage=") + stage() + " unknown_exception");
         set_status(L"音频已停止：未知错误。请重新选择设备后启动。");
     }
     music_level_ = mic_level_ = output_level_ = 0;
+    mark(Stage::released);
+    diagnostics::write("engine.stopped", "all_stream_scopes_released=1 mic_frames=" + std::to_string(mic_frames_.load()));
     active_ = false;
 }
 } // namespace partymic

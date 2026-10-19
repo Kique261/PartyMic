@@ -1,5 +1,6 @@
 #include "windows/preview.h"
 #include "windows/devices.h"
+#include "windows/diagnostics.h"
 #include <audioclient.h>
 #include <audiopolicy.h>
 #include <shlobj.h>
@@ -40,7 +41,8 @@ struct Client {
         check(audio->Initialize(AUDCLNT_SHAREMODE_SHARED,AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM|AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,1000000,0,&format,nullptr),"Preview initialize");
     }
     void start(){check(audio->Start(),"Preview start");started=true;}
-    ~Client(){if(started)audio->Stop();audio->Reset();}
+    void close(){if(!audio)return;diagnostics::write("preview.stream.release.begin");if(started)audio->Stop();audio->Reset();audio.Reset();started=false;diagnostics::write("preview.stream.release.end");}
+    ~Client(){close();}
 };
 std::wstring error_text(const char* text){
     const int count=MultiByteToWideChar(CP_UTF8,0,text,-1,nullptr,0);
@@ -93,29 +95,36 @@ void AudioPreview::message(std::wstring text){std::lock_guard lock(mutex_);statu
 std::wstring AudioPreview::status()const{std::lock_guard lock(mutex_);return status_;}
 std::filesystem::path AudioPreview::last_file()const{std::lock_guard lock(mutex_);return last_file_;}
 void AudioPreview::stop(){
-    const bool was_playing=playing();stop_=true;if(worker_.joinable())worker_.join();mode_=0;level_=0;
+    const bool was_playing=playing();request_stop();if(worker_.joinable())worker_.join();mode_=0;level_=0;
     if(was_playing)message(L"试听已停止。");
+}
+void AudioPreview::request_stop() noexcept {
+    if(busy()&&!stop_.exchange(true))diagnostics::write("preview.stop.request");
 }
 void AudioPreview::record(std::wstring id,bool mixed,unsigned seconds){
     if(busy())throw std::runtime_error("Stop current recording/playback first");
     if(seconds<1||seconds>30)throw std::runtime_error("Recording duration must be 1-30 seconds");
-    stop();stop_=false;mode_=1;message(L"正在准备录音…");
+    stop();stop_=false;progress_tick_=GetTickCount64();mode_=1;message(L"正在准备录音…");
+    diagnostics::write("preview.record.request", "mixed="+std::to_string(mixed)+" seconds="+std::to_string(seconds));
     try{worker_=std::thread(&AudioPreview::capture,this,std::move(id),mixed,seconds);}catch(...){mode_=0;throw;}
 }
 void AudioPreview::play(std::wstring id){
     if(busy())throw std::runtime_error("Stop current recording/playback first");
     auto file=last_file();if(file.empty())throw std::runtime_error("Record a sample before playback");
-    stop();stop_=false;mode_=2;message(L"正在准备试听…");
+    stop();stop_=false;progress_tick_=GetTickCount64();mode_=2;message(L"正在准备试听…");
+    diagnostics::write("preview.play.request");
     try{worker_=std::thread(&AudioPreview::playback,this,std::move(id),std::move(file));}catch(...){mode_=0;throw;}
 }
 void AudioPreview::capture(std::wstring id,bool mixed,unsigned seconds){
     try{
+        diagnostics::write("preview.capture.open",L"device="+id);
         ComScope com;Client client(id,eCapture);ComPtr<IAudioCaptureClient> capture;
         check(client.audio->GetService(IID_PPV_ARGS(&capture)),"Preview capture service");
         std::vector<int16_t> pcm;const size_t target=size_t(seconds)*48000*2;pcm.reserve(target);
         client.start();const auto start=GetTickCount64();unsigned previous=0,discontinuities=0;float current_gain=0;
         message(mixed?L"正在录制混音 0 秒…":L"正在录制人声 0 秒…");
         while(!stop_&&pcm.size()<target){
+            progress_tick_=GetTickCount64();
             if(GetTickCount64()-start>(seconds+5)*1000ULL)throw std::runtime_error("Recording timed out");
             UINT32 count=0;check(capture->GetNextPacketSize(&count),"Preview packet size");
             if(!count){Sleep(3);continue;}
@@ -136,16 +145,22 @@ void AudioPreview::capture(std::wstring id,bool mixed,unsigned seconds){
             const auto elapsed=unsigned(pcm.size()/(48000*2));
             if(elapsed!=previous){previous=elapsed;message((mixed?L"正在录制混音 ":L"正在录制人声 ")+std::to_wstring(elapsed)+L" / "+std::to_wstring(seconds)+L" 秒；可调整人声音量或提前停止。");}
         }
+        capture.Reset();client.close();
+        diagnostics::write("preview.capture.finished", "frames="+std::to_string(pcm.size()/2)+" discontinuities="+std::to_string(discontinuities));
         if(pcm.size()<4800*2){message(L"录音过短，未保存。请重新录制。");}
         else{
+            diagnostics::write("preview.save.begin","frames="+std::to_string(pcm.size()/2));
             auto path=save_wav(pcm,mixed);{std::lock_guard lock(mutex_);last_file_=path;}
+            diagnostics::write("preview.save.end");
             message(L"已保存 "+std::to_wstring(pcm.size()/(48000*2))+L" 秒录音："+path.filename().wstring()+L"；采集间断 "+std::to_wstring(discontinuities)+L"。点击试听或打开文件夹。");
         }
-    }catch(const std::exception& e){message(L"录音失败："+error_text(e.what()));}
+    }catch(const std::exception& e){diagnostics::write("preview.capture.error",e.what());message(L"录音失败："+error_text(e.what()));}
+    diagnostics::write("preview.stopped", "record resources_released=1");
     mode_=0;level_=0;
 }
 void AudioPreview::playback(std::wstring id,std::filesystem::path file){
     try{
+        diagnostics::write("preview.play.open",L"device="+id);
         ComScope com;auto pcm=load_wav(file);Client client(id,eRender);ComPtr<IAudioRenderClient> render;
         check(client.audio->GetService(IID_PPV_ARGS(&render)),"Preview render service");
         ComPtr<ISimpleAudioVolume> volume;check(client.audio->GetService(IID_PPV_ARGS(&volume)),"Preview session volume");
@@ -162,6 +177,7 @@ void AudioPreview::playback(std::wstring id,std::filesystem::path file){
         const auto deadline=GetTickCount64()+frames*1000/48000+5000;
         message(L"正在试听："+file.filename().wstring()+L"。麦克风混音已停止，可调节试听音量。");
         while(!stop_){
+            progress_tick_=GetTickCount64();
             if(GetTickCount64()>deadline)throw std::runtime_error("Playback timed out");
             UINT32 padding=0;check(client.audio->GetCurrentPadding(&padding),"Preview render padding");
             if(padding>capacity)throw std::runtime_error("Invalid preview padding");
@@ -169,7 +185,8 @@ void AudioPreview::playback(std::wstring id,std::filesystem::path file){
             const auto count=UINT32(std::min(frames-sent,size_t(capacity-padding)));if(count)write(count);Sleep(3);
         }
         message(stop_?L"试听已停止。":L"试听结束。可调整人声音量后重新录制对比；文件也可用系统播放器打开。");
-    }catch(const std::exception& e){message(L"试听失败："+error_text(e.what()));}
+    }catch(const std::exception& e){diagnostics::write("preview.play.error",e.what());message(L"试听失败："+error_text(e.what()));}
+    diagnostics::write("preview.stopped", "play resources_released=1");
     mode_=0;level_=0;
 }
 }

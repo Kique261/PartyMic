@@ -11,7 +11,7 @@ jobs:
         run: cmake -S . -B build -A x64 -DCMAKE_SYSTEM_VERSION=10.0.22621.0
       - name: Build
         run: cmake --build build --config Release --parallel
-      - name: Test audio core
+      - name: Test audio core and diagnostics
         run: ctest --test-dir build -C Release --output-on-failure
       - uses: actions/upload-artifact@v4
         with:

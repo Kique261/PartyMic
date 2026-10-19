@@ -1,4 +1,5 @@
 #include "windows/devices.h"
+#include "windows/diagnostics.h"
 #include <audiopolicy.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <tlhelp32.h>
@@ -43,6 +44,7 @@ void check(HRESULT hr, const char* operation) {
     if (FAILED(hr)) {
         std::ostringstream text;
         text << operation << " (HRESULT 0x" << std::hex << static_cast<unsigned long>(hr) << ")";
+        diagnostics::write("api.error", text.str());
         throw std::runtime_error(text.str());
     }
 }
@@ -157,9 +159,18 @@ std::vector<Application> audio_applications() {
 }
 
 bool process_matches(DWORD pid, const std::wstring& executable) {
-    const auto all = processes();
-    const auto found = all.find(pid);
-    return found != all.end() && !excluded(found->second.name) &&
-        lower(found->second.name) == lower(executable);
+    // The watcher needs one PID, not an allocating map of every process every
+    // two seconds. A snapshot reads metadata only; no target handles are opened.
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) throw std::runtime_error("Cannot snapshot selected source metadata");
+    PROCESSENTRY32W entry{};entry.dwSize = sizeof(entry);
+    bool matches = false;
+    if (Process32FirstW(snapshot, &entry)) do {
+        if (entry.th32ProcessID == pid) {
+            matches = !excluded(entry.szExeFile) && _wcsicmp(entry.szExeFile, executable.c_str()) == 0;
+            break;
+        }
+    } while (Process32NextW(snapshot, &entry));
+    CloseHandle(snapshot);return matches;
 }
 } // namespace partymic

@@ -40,6 +40,8 @@
 
 ## 帮助
 
+0.5.4 及后续版本可点击侧栏“打开日志文件夹”。日志位置、内容和反馈方法见 [故障排查](docs/troubleshooting.md#运行日志与问题反馈)。日志不包含录音，也不自动上传。
+
 - [安装、升级与卸载](docs/install.md)
 - [完整使用说明](docs/usage.md)
 - [没有声音、音乐发闷或断音](docs/troubleshooting.md)
