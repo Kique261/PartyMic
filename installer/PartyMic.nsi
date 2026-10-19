@@ -183,7 +183,17 @@ FunctionEnd
 
 ; Refuse overwriting arbitrary nonempty folders. Our marker allows upgrades.
 Function DirectoryLeave
-  GetFullPathName $INSTDIR $INSTDIR
+  ; NSIS GetFullPathName fails when a parent folder does not exist yet.
+  ; The Win32 API canonicalizes new paths without creating them.
+  System::Call 'kernel32::GetFullPathNameW(w "$INSTDIR", i ${NSIS_MAX_STRLEN}, w .r0, p 0) i .r1'
+  ${If} $1 = 0
+  ${OrIf} $1 >= ${NSIS_MAX_STRLEN}
+    IfSilent +2
+    MessageBox MB_OK|MB_ICONEXCLAMATION "安装路径无效或过长，请选择其他文件夹。"
+    SetErrorLevel 5
+    Abort
+  ${EndIf}
+  StrCpy $INSTDIR $0
   ${GetRoot} "$INSTDIR" $0
   ${If} $INSTDIR == $0
   ${OrIf} $INSTDIR == "$0\"
@@ -203,7 +213,9 @@ Function DirectoryLeave
   ${If} $0 == "${PRODUCT_ID}"
     Return
   ${EndIf}
+  ClearErrors
   FindFirst $0 $1 "$INSTDIR\*"
+  IfErrors empty_directory
   ${DoWhile} $1 != ""
     ${If} $1 != "."
     ${AndIf} $1 != ".."
@@ -214,8 +226,11 @@ Function DirectoryLeave
       Abort
     ${EndIf}
     FindNext $0 $1
+    IfErrors directory_enumerated
   ${Loop}
+  directory_enumerated:
   FindClose $0
+  empty_directory:
 FunctionEnd
 
 !macro RequireClosed Prefix
