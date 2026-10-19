@@ -275,6 +275,9 @@ void report_engine(const AudioEngine &engine) {
                << L" max_wake_gap_us=" << engine.max_wake_gap_us()
                << L" max_process_check_us=" << engine.max_process_check_us()
                << L" max_render_us=" << engine.max_render_us()
+               << L" max_capture_drain_us=" << engine.max_capture_drain_us()
+               << L" startup_dropped_frames=" << engine.startup_dropped_frames()
+               << L" empty_render_wakes=" << engine.empty_render_wakes()
                << L" music_discontinuities=" << engine.music_discontinuities()
                << L" mic_discontinuities=" << engine.mic_discontinuities()
                << L" music_silent_frames=" << engine.music_silent_frames() << std::endl;
@@ -521,6 +524,7 @@ int fidelity_test() {
         const auto measured = reader.settled_measure();
         require(measured.frames > 48000 && measured.rms() > 0.00001,
                 "Fidelity probe receives a nonzero signal");
+        report_engine(engine);
         if (!reference)
             reference = measured.rms();
         const double relative_db = 20 * std::log10(measured.rms() / reference);

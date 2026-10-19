@@ -35,6 +35,9 @@ public:
     unsigned long long max_wake_gap_us() const { return max_wake_gap_us_.load(); }
     unsigned long long max_process_check_us() const { return max_process_check_us_.load(); }
     unsigned long long max_render_us() const { return max_render_us_.load(); }
+    unsigned long long max_capture_drain_us() const { return max_capture_drain_us_.load(); }
+    unsigned long long startup_dropped_frames() const { return startup_dropped_frames_.load(); }
+    unsigned long long empty_render_wakes() const { return empty_render_wakes_.load(); }
     unsigned long long music_discontinuities() const { return music_discontinuities_.load(); }
     unsigned long long mic_discontinuities() const { return mic_discontinuities_.load(); }
     unsigned long long music_silent_frames() const { return music_silent_frames_.load(); }
@@ -50,6 +53,7 @@ private:
     std::atomic<unsigned long long> dropped_frames_ = 0;
     std::atomic<unsigned long long> music_starved_frames_ = 0, mic_starved_frames_ = 0;
     std::atomic<unsigned long long> max_wake_gap_us_ = 0, max_process_check_us_ = 0, max_render_us_ = 0;
+    std::atomic<unsigned long long> max_capture_drain_us_ = 0, startup_dropped_frames_ = 0, empty_render_wakes_ = 0;
     std::atomic<unsigned long long> music_discontinuities_ = 0, mic_discontinuities_ = 0;
     std::atomic<unsigned long long> music_silent_frames_ = 0;
     std::atomic<unsigned> render_buffer_frames_ = 0;

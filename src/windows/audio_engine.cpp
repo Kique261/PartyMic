@@ -260,14 +260,17 @@ struct Stream {
 
     void initialize(bool is_capture, bool process_loopback) {
         auto wave = format();
-        DWORD flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
-            AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+        DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+        if (is_capture) flags |= AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
         if (process_loopback) flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
-        // Shared event-driven WASAPI requires both timing arguments to be zero.
-        // The engine chooses the actual buffer size; query it below.
-        check(client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, 0, 0, &wave, nullptr),
+        // Capture uses shared event mode with both timing arguments zero.
+        // Render uses a 60 ms shared timer buffer, refilled on capture wakes or
+        // the 10 ms fallback. The former 22 ms device minimum could underrun
+        // after a single scheduling delay under load. Query the actual size.
+        check(client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, is_capture ? 0 : 600000,
+            0, &wave, nullptr),
             "Initialize 48 kHz stereo audio stream");
-        check(client->SetEventHandle(ready), "Set audio wake event");
+        if (is_capture) check(client->SetEventHandle(ready), "Set audio wake event");
         check(client->GetBufferSize(&buffer_frames), "Read audio buffer size");
         if (is_capture) check(client->GetService(IID_PPV_ARGS(&capture)), "Get capture client");
         else check(client->GetService(IID_PPV_ARGS(&render)), "Get render client");
@@ -319,6 +322,7 @@ void AudioEngine::start(AudioSelection selection) {
     dropped_frames_ = 0;
     music_starved_frames_ = mic_starved_frames_ = 0;
     max_wake_gap_us_ = max_process_check_us_ = max_render_us_ = 0;
+    max_capture_drain_us_ = startup_dropped_frames_ = empty_render_wakes_ = 0;
     music_discontinuities_ = mic_discontinuities_ = music_silent_frames_ = 0;
     render_buffer_frames_ = 0;
     mmcss_registered_ = false;
@@ -351,7 +355,7 @@ void AudioEngine::run(AudioSelection selection) {
         if (music.client && WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
             music.initialize(true, true);
             // Both capture queues and all scratch buffers are allocated before Start.
-            AudioQueue music_queue(sample_rate * 60 / 1000), mic_queue(sample_rate * 60 / 1000);
+            AudioQueue music_queue(sample_rate * 120 / 1000), mic_queue(sample_rate * 120 / 1000);
             Mixer mixer;
             std::vector<float> music_samples(output.buffer_frames * channels);
             std::vector<float> mic_samples(output.buffer_frames * channels);
@@ -363,8 +367,7 @@ void AudioEngine::run(AudioSelection selection) {
             // Wait for actual queued frames, rather than assuming 30 ms elapsed
             // means both captures are ready. A paused source must still start.
             const auto prefill_deadline = GetTickCount64() + 100;
-            const auto prefill_frames = std::min<unsigned>(sample_rate * 60 / 1000,
-                sample_rate / 50 + output.buffer_frames);
+            const auto prefill_frames = sample_rate * 30 / 1000;
             HANDLE capture_waits[] = {stop_event_, music.ready, microphone.ready};
             while (GetTickCount64() < prefill_deadline &&
                 WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
@@ -375,6 +378,7 @@ void AudioEngine::run(AudioSelection selection) {
                 const auto wait = WaitForMultipleObjects(3, capture_waits, FALSE, 5);
                 if (wait == WAIT_FAILED) check(HRESULT_FROM_WIN32(GetLastError()), "Wait for capture prefill");
             }
+            startup_dropped_frames_ = music_queue.dropped_frames() + mic_queue.dropped_frames();
             BYTE* initial = nullptr;
             check(output.render->GetBuffer(output.buffer_frames, &initial), "Prime output buffer");
             check(output.render->ReleaseBuffer(output.buffer_frames, AUDCLNT_BUFFERFLAGS_SILENT), "Prime output silence");
@@ -391,14 +395,17 @@ void AudioEngine::run(AudioSelection selection) {
                 last_wake = woke;
                 // Never reattach to a new PID automatically; restart is explicit.
                 source_watch.check_source();
+                const auto drain_begin = microseconds();
                 music.drain(music_queue);
                 microphone.drain(mic_queue);
+                update_max(max_capture_drain_us_, microseconds() - drain_begin);
                 music_discontinuities_ = music.discontinuities;
                 mic_discontinuities_ = microphone.discontinuities;
                 music_silent_frames_ = music.silent_frames;
                 UINT32 padding = 0;
                 check(output.client->GetCurrentPadding(&padding), "Read output padding");
                 if (padding > output.buffer_frames) throw std::runtime_error("Invalid output padding");
+                if (!padding) ++empty_render_wakes_;
                 const auto frames = output.buffer_frames - padding;
                 if (!frames) continue;
                 const auto render_begin = microseconds();
