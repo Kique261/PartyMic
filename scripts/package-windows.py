@@ -56,6 +56,8 @@ def main():
         raise RuntimeError('Missing embedded application icon resources')
     output = root / 'dist'
     package = output / 'PartyMic-win11-x64'
+    if package.exists():
+        shutil.rmtree(package)
     package.mkdir(parents=True, exist_ok=True)
     shutil.copy2(executable, output / 'PartyMic.exe')
     shutil.copy2(executable, package / 'PartyMic.exe')
@@ -64,13 +66,12 @@ def main():
     quick_start = (root / 'docs' / 'quick-start-windows.txt').read_text(encoding='utf-8')
     (package / '使用说明.txt').write_bytes(b'\xef\xbb\xbf' + quick_start.replace('\n', '\r\n').encode('utf-8'))
     docs = package / 'docs'
-    docs.mkdir(exist_ok=True)
-    for path in sorted((root / 'docs').glob('*.md')):
-        shutil.copy2(path, docs / path.name)
+    shutil.copytree(root / 'docs', docs, ignore=shutil.ignore_patterns('__pycache__'))
     runtime_record = root / 'docs' / 'test-results' / 'windows-runtime.json'
     runtime_evidence = json.loads(runtime_record.read_text()) if runtime_record.exists() else {}
     runtime_verified = (runtime_evidence.get('version') == version
                         and runtime_evidence.get('ui', {}).get('visual_passed') is True
+                        and runtime_evidence.get('ui', {}).get('screen_sequence_passed') is True
                         and runtime_evidence.get('exe_sha256') == sha256(executable)
                         and runtime_evidence.get('gui_passed') is True
                         and runtime_evidence.get('core_tests_passed') is True

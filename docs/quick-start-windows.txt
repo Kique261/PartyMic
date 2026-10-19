@@ -1,4 +1,4 @@
-PartyMic 0.5.0 · Windows 11 x64
+PartyMic 0.5.1 预览版 · Windows 11 x64
 
 这是在 Fedora 上编译的 Windows 64 位桌面程序。新版改善数字音乐高频衰减与切页动效，侧栏包含混音、录音试听和使用指南；实际测试范围与 EXE 哈希见 docs/verification.md。真人通话主观音质及腾讯 ACE 兼容性尚未验收。
 
@@ -26,3 +26,5 @@ EXE 不需要管理员权限，C++ 运行库已静态链接。VB-CABLE 驱动需
 未承诺 ACE 白名单或零封号风险；如游戏或反作弊提示冲突，停止使用。
 
 详细说明见 README.md，实际验证记录见 docs/verification.md。
+
+本版界面和录音试听已验证；当前音频 Smoke 在高负载下检出断音，尚未完成完整硬件验收。请参阅 docs/verification.md。

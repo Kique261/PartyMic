@@ -198,7 +198,7 @@ class App {
         ui::style(hnd, ui::Kind::Meter, ui::Icon::None, accent);
         return hnd;
     }
-    void position_controls() {
+    void position_controls(bool synchronous = true) {
         RECT r{};
         GetClientRect(window, &r);
         const int maximum = std::max(0, px(content_height()) - int(r.bottom));
@@ -276,7 +276,10 @@ class App {
         }
         if (batch)
             EndDeferWindowPos(batch);
-        RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        // A staged destination is captured explicitly under the content shield.
+        // Queue its live repaint instead of synchronously rendering it twice.
+        RedrawWindow(window, nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ALLCHILDREN | (synchronous ? RDW_UPDATENOW : 0));
     }
     void scroll(int cmd, int wheel = 0) {
         page_moving = false;
@@ -328,7 +331,7 @@ class App {
         ui::selected(nav_mix, page == 0);
         ui::selected(nav_record, page == 1);
         ui::selected(nav_guide, page == 2);
-        position_controls();
+        position_controls(!animate);
         SetFocus(page == 0 ? music_combo : (page == 1 ? record_source : nav_guide));
         page_moving = animate && page_transition.start();
         if (page_moving && !SetTimer(window, 2, 10, nullptr)) {
@@ -418,66 +421,71 @@ class App {
             ui::rounded(dc, rect(x, y + 1, w, h), px(13), RGB(248, 248, 250));
             ui::rounded(dc, rect(x, y, w, h), px(13), ui::white, stroke);
         };
-        if (page == 0) {
-            txt(L"音源与设备", 252, 122, 300, 24, heading_font, ui::ink);
-            card(252, 166, 836 + delta, 222, engine.active() ? ui::teal : ui::border);
-            txt(L"音频来源", 276, 180, 250, 28, heading_font, ui::ink);
-            txt(L"只采集你选择的音乐软件", 786 + delta, 184, 278, 24, small_font, ui::muted);
-            for (int i = 0; i < 3; ++i) {
-                const ui::Icon shapes[] = {ui::Icon::Music, ui::Icon::Mic, ui::Icon::Cable};
-                ui::icon(dc, shapes[i], rect(276, 229 + i * 50, 20, 20), i == 0 ? ui::orange : ui::muted);
+        RECT content_area{px(221), px(110), bounds.right, bounds.bottom};
+        // During a fade the opaque child shield clips this entire area out of
+        // WM_PAINT. Header/sidebar updates must not rasterize hidden cards.
+        if (RectVisible(target, &content_area)) {
+            if (page == 0) {
+                txt(L"音源与设备", 252, 122, 300, 24, heading_font, ui::ink);
+                card(252, 166, 836 + delta, 222, engine.active() ? ui::teal : ui::border);
+                txt(L"音频来源", 276, 180, 250, 28, heading_font, ui::ink);
+                txt(L"只采集你选择的音乐软件", 786 + delta, 184, 278, 24, small_font, ui::muted);
+                for (int i = 0; i < 3; ++i) {
+                    const ui::Icon shapes[] = {ui::Icon::Music, ui::Icon::Mic, ui::Icon::Cable};
+                    ui::icon(dc, shapes[i], rect(276, 229 + i * 50, 20, 20), i == 0 ? ui::orange : ui::muted);
+                }
+                const int half = 408 + delta / 2;
+                card(252, 408, half, 166);
+                card(680 + delta / 2, 408, half, 166);
+                ui::rounded(dc, rect(276, 430, 34, 34), px(9), ui::orange_soft);
+                ui::icon(dc, ui::Icon::Music, rect(284, 438, 18, 18), ui::orange);
+                txt(L"音乐音量", 322, 434, 160, 28, heading_font, ui::ink);
+                ui::rounded(dc, rect(704 + delta / 2, 430, 34, 34), px(9), ui::teal_soft);
+                ui::icon(dc, ui::Icon::Mic, rect(712 + delta / 2, 438, 18, 18), ui::teal);
+                txt(L"人声音量", 750 + delta / 2, 434, 160, 28, heading_font, ui::ink);
+                card(252, 594, 836 + delta, 86);
+                txt(L"让讲话更突出，音乐平滑降低后恢复", 276, 644, 420, 22, small_font, ui::muted);
+                card(252, 700, 836 + delta, 100);
+                txt(L"输出电平", 604 + delta, 719, 150, 20, small_font, ui::muted);
+            } else if (page == 1) {
+                txt(L"录一段，听听效果", 252, 122, 480, 26, heading_font, ui::ink);
+                card(252, 166, 836 + delta, 180);
+                ui::rounded(dc, rect(276, 185, 34, 34), px(9), ui::orange_soft);
+                ui::icon(dc, ui::Icon::Record, rect(284, 193, 18, 18), ui::orange);
+                txt(L"本地录音", 322, 188, 400, 28, heading_font, ui::ink);
+                txt(L"录制 15 秒自动保存，也可以提前停止。文件保存在桌面的 PartyMic录音 文件夹。", 276, 296,
+                    780 + delta, 26, small_font, ui::muted);
+                card(252, 366, 836 + delta, 136);
+                txt(L"人声音量", 276, 382, 300, 28, heading_font, ui::ink);
+                txt(L"与混音共用，可边录边调", 276, 469, 500, 20, small_font, ui::muted);
+                card(252, 522, 836 + delta, 178);
+                ui::icon(dc, ui::Icon::Headphones, rect(276, 545, 21, 21), ui::teal);
+                txt(L"试听回放", 310, 541, 400, 28, heading_font, ui::ink);
+                card(252, 720, 836 + delta, 80);
+                txt(L"录放电平", 276, 733, 90, 20, small_font, ui::muted);
+            } else {
+                card(252, 138, 836 + delta, 318);
+                txt(L"三步，开始你的混音", 276, 158, 700, 32, heading_font, ui::ink);
+                const wchar_t *steps[] = {L"01   选择音乐软件和麦克风", L"02   调好音乐与人声的比例",
+                                          L"03   在语音软件中选择 CABLE Output"};
+                const wchar_t *hints[] = {L"让网易云先播放，再刷新设备；虚拟声卡选择 CABLE Input。",
+                                          L"音乐默认 25%，人声默认 100%。自动压低可按需要开启。",
+                                          L"点击开始混音，音乐与讲话就会一起送入虚拟麦克风。"};
+                for (int i = 0; i < 3; ++i) {
+                    txt(steps[i], 276, 216 + i * 72, 760 + delta, 26, font, ui::ink);
+                    txt(hints[i], 312, 245 + i * 72, 720 + delta, 24, small_font, ui::muted);
+                }
+                card(252, 476, 836 + delta, 146);
+                txt(L"先录音，再试听", 276, 496, 700, 30, heading_font, ui::ink);
+                txt(L"仅人声录音不需要开始混音。试听输出请选择正在使用的 HDMI、耳机或音响。", 276, 540,
+                    780 + delta, 24, font, ui::muted);
+                txt(L"试听会先停止混音，避免声音循环；暂停网易云后比较，更容易听清细节。", 276, 573, 780 + delta,
+                    24, font, ui::muted);
+                ui::rounded(dc, rect(252, 642, 836 + delta, 94), px(12), ui::teal_soft);
+                txt(L"佩戴耳机，保留更干净的背景音乐", 276, 657, 760 + delta, 28, heading_font, ui::teal_text);
+                txt(L"音响外放可能被麦克风再次拾回。游戏与 ACE 兼容性尚未经认证。", 276, 693, 760 + delta, 24,
+                    small_font, ui::teal_text);
             }
-            const int half = 408 + delta / 2;
-            card(252, 408, half, 166);
-            card(680 + delta / 2, 408, half, 166);
-            ui::rounded(dc, rect(276, 430, 34, 34), px(9), ui::orange_soft);
-            ui::icon(dc, ui::Icon::Music, rect(284, 438, 18, 18), ui::orange);
-            txt(L"音乐音量", 322, 434, 160, 28, heading_font, ui::ink);
-            ui::rounded(dc, rect(704 + delta / 2, 430, 34, 34), px(9), ui::teal_soft);
-            ui::icon(dc, ui::Icon::Mic, rect(712 + delta / 2, 438, 18, 18), ui::teal);
-            txt(L"人声音量", 750 + delta / 2, 434, 160, 28, heading_font, ui::ink);
-            card(252, 594, 836 + delta, 86);
-            txt(L"让讲话更突出，音乐平滑降低后恢复", 276, 644, 420, 22, small_font, ui::muted);
-            card(252, 700, 836 + delta, 100);
-            txt(L"输出电平", 604 + delta, 719, 150, 20, small_font, ui::muted);
-        } else if (page == 1) {
-            txt(L"录一段，听听效果", 252, 122, 480, 26, heading_font, ui::ink);
-            card(252, 166, 836 + delta, 180);
-            ui::rounded(dc, rect(276, 185, 34, 34), px(9), ui::orange_soft);
-            ui::icon(dc, ui::Icon::Record, rect(284, 193, 18, 18), ui::orange);
-            txt(L"本地录音", 322, 188, 400, 28, heading_font, ui::ink);
-            txt(L"录制 15 秒自动保存，也可以提前停止。文件保存在桌面的 PartyMic录音 文件夹。", 276, 296,
-                780 + delta, 26, small_font, ui::muted);
-            card(252, 366, 836 + delta, 136);
-            txt(L"人声音量", 276, 382, 300, 28, heading_font, ui::ink);
-            txt(L"与混音共用，可边录边调", 276, 469, 500, 20, small_font, ui::muted);
-            card(252, 522, 836 + delta, 178);
-            ui::icon(dc, ui::Icon::Headphones, rect(276, 545, 21, 21), ui::teal);
-            txt(L"试听回放", 310, 541, 400, 28, heading_font, ui::ink);
-            card(252, 720, 836 + delta, 80);
-            txt(L"录放电平", 276, 733, 90, 20, small_font, ui::muted);
-        } else {
-            card(252, 138, 836 + delta, 318);
-            txt(L"三步，开始你的混音", 276, 158, 700, 32, heading_font, ui::ink);
-            const wchar_t *steps[] = {L"01   选择音乐软件和麦克风", L"02   调好音乐与人声的比例",
-                                      L"03   在语音软件中选择 CABLE Output"};
-            const wchar_t *hints[] = {L"让网易云先播放，再刷新设备；虚拟声卡选择 CABLE Input。",
-                                      L"音乐默认 25%，人声默认 100%。自动压低可按需要开启。",
-                                      L"点击开始混音，音乐与讲话就会一起送入虚拟麦克风。"};
-            for (int i = 0; i < 3; ++i) {
-                txt(steps[i], 276, 216 + i * 72, 760 + delta, 26, font, ui::ink);
-                txt(hints[i], 312, 245 + i * 72, 720 + delta, 24, small_font, ui::muted);
-            }
-            card(252, 476, 836 + delta, 146);
-            txt(L"先录音，再试听", 276, 496, 700, 30, heading_font, ui::ink);
-            txt(L"仅人声录音不需要开始混音。试听输出请选择正在使用的 HDMI、耳机或音响。", 276, 540,
-                780 + delta, 24, font, ui::muted);
-            txt(L"试听会先停止混音，避免声音循环；暂停网易云后比较，更容易听清细节。", 276, 573, 780 + delta,
-                24, font, ui::muted);
-            ui::rounded(dc, rect(252, 642, 836 + delta, 94), px(12), ui::teal_soft);
-            txt(L"佩戴耳机，保留更干净的背景音乐", 276, 657, 760 + delta, 28, heading_font, ui::teal_text);
-            txt(L"音响外放可能被麦克风再次拾回。游戏与 ACE 兼容性尚未经认证。", 276, 693, 760 + delta, 24,
-                small_font, ui::teal_text);
         }
         RestoreDC(dc, content_clip);
         BitBlt(target, 0, 0, bounds.right, bounds.bottom, dc, 0, 0, SRCCOPY);

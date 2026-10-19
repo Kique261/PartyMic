@@ -1,6 +1,6 @@
 # 架构与音频行为
 
-适用版本：0.5.0。维护入口见 [development.md](development.md)，历史变更见 [../CHANGELOG.md](../CHANGELOG.md)。
+适用版本：0.5.1。维护入口见 [development.md](development.md)，历史变更见 [../CHANGELOG.md](../CHANGELOG.md)。
 
 
 ## 数据路径
@@ -60,4 +60,4 @@ flowchart LR
 
 ## 原生界面
 
-`main.cpp` 负责三页导航、布局和音频状态绑定；`page_transition.h/.cpp` 管理内容快照淡入，页面控件只布局一次，200 ms 内用系统 AlphaBlend 合成，结束释放位图与覆盖层；`ui_theme.h/.cpp` 统一颜色、圆角、图标与原生控件绘制，使用 Windows 系统 GDI+。继续保留普通 Win32 控件、键盘操作和原音频线程，不引入浏览器运行时。细节见 [ui-design.md](ui-design.md)。
+`main.cpp` 负责三页导航、布局和音频状态绑定；`page_transition.h/.cpp` 管理内容快照淡入，先显示旧页遮挡，再布局并捕获目标页；页面控件只布局一次，200 ms 内用系统 AlphaBlend 合成，结束释放位图与覆盖层。主窗口依靠父子/兄弟裁剪保护内容，避免整窗口 `WS_EX_COMPOSITED` 的额外合成。遮挡下的实时目标重绘排入消息队列，父窗口跳过不可见卡片；`ui_theme.h/.cpp` 统一颜色、圆角、图标与原生控件绘制，使用 Windows 系统 GDI+。继续保留普通 Win32 控件、键盘操作和原音频线程，不引入浏览器运行时。细节见 [ui-design.md](ui-design.md)。

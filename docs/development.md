@@ -1,6 +1,6 @@
 # 开发、更新与远程验证
 
-已验证分发版本为 0.5.0，源码为未发布 0.5.1 候选；本轮已结束，恢复先读 [收尾交接](handoff-2026-10-18.md)。入口为 [README](../README.md)，当前进展与待验证项目见 [development-status.md](development-status.md)。音频路径和行为约束见 [architecture.md](architecture.md)。
+当前分发为 0.5.1 预览版：界面、核心和录音试听通过，当前音频 Smoke 失败，完整硬件验收未通过。恢复开发先读 [最新交接](handoff-2026-10-19.md)。入口为 [README](../README.md)，待办见 [development-status.md](development-status.md)，数据路径见 [architecture.md](architecture.md)。
 
 ## 环境与构建
 
@@ -63,3 +63,10 @@ UI 线程控制工作线程启停。`AudioEngine` 使用互斥锁读取设置，
 ## 仍需推进
 
 真人主观对比、语音客户端编码/降噪、60 分钟稳定性、端到端延迟、热插拔、可选麦克风 AEC、设置持久化、应用代码签名、MSVC 原生构建与 CI。腾讯 LOL/ACE 兼容性没有认证；不得通过关闭或绕过反作弊来“验证”。
+
+
+## GitHub 维护
+
+公开仓库为 `Kique261/PartyMic`，主分支 `main`。提交源码、图标、脚本及不含私人路径的数值证据；`build*`、`dist/`、录音、密钥与连接配置不入库。发行页提供 EXE / ZIP、源码包和 SHA256SUMS；保留 0.5.0 本地回退包。当前 0.5.1 为预览版，不能把硬件失败隐藏在“全部通过”标记下。
+
+当前 OAuth 凭据可推送代码和创建发行，但缺少 `workflow` scope，GitHub 拒绝提交 `.github/workflows/build.yml`。模板存放在 `docs/workflows/build.yml`；维护者之后可在本机执行 `gh auth refresh -h github.com -s workflow`，再将模板复制到 `.github/workflows/build.yml` 并提交。不要把访问令牌写入脚本或 Markdown；目前没有实际 CI 运行成绩。

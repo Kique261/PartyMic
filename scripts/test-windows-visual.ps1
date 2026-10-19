@@ -18,7 +18,12 @@ public class Visual {
  [DllImport("user32.dll")]public static extern bool SystemParametersInfo(uint action,uint p,out bool enabled,uint flags);
  [StructLayout(LayoutKind.Sequential)]public struct P{public int X,Y;}
  public static System.Drawing.Bitmap Capture(IntPtr h,bool screen=false){R r;GetWindowRect(h,out r);var b=new System.Drawing.Bitmap(r.Right-r.L,r.B-r.T);using(var g=System.Drawing.Graphics.FromImage(b)){if(screen){g.CopyFromScreen(r.L,r.T,0,0,b.Size);}else{var dc=g.GetHdc();PrintWindow(h,dc,2);g.ReleaseHdc(dc);}}return b;}
- public static int Pixel(IntPtr h){using(var b=Capture(h)){return b.GetPixel(b.Width-10,b.Height/2).ToArgb();}}
+ // Read a visible control pixel directly. PrintWindow(RENDERFULLCONTENT) can
+ // wait for DWM long enough to miss the entire 160 ms hover transition.
+ [DllImport("user32.dll")]static extern IntPtr GetDC(IntPtr h);
+ [DllImport("user32.dll")]static extern int ReleaseDC(IntPtr h,IntPtr dc);
+ [DllImport("gdi32.dll")]static extern uint GetPixel(IntPtr dc,int x,int y);
+ public static int Pixel(IntPtr h){R r;GetWindowRect(h,out r);var dc=GetDC(h);try{uint c=GetPixel(dc,r.Right-r.L-10,(r.B-r.T)/2);if(c==0xffffffff)throw new Exception("Visible control pixel unavailable");return unchecked((int)(0xff000000|((c&255)<<16)|(c&0xff00)|((c>>16)&255)));}finally{ReleaseDC(h,dc);}}
  public static double Compare(System.Drawing.Bitmap a,System.Drawing.Bitmap b){int bad=0,total=a.Width*a.Height;for(int y=0;y<a.Height;y++)for(int x=0;x<a.Width;x++){var p=a.GetPixel(x,y);var q=b.GetPixel(x,y);if(Math.Abs(p.R-q.R)+Math.Abs(p.G-q.G)+Math.Abs(p.B-q.B)>30)bad++;}return (double)bad/total;}
  [DllImport("user32.dll")]public static extern bool GetWindowRect(IntPtr h,out R r);
  [DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int height,uint flags);
@@ -103,6 +108,7 @@ try{
  Require ([Visual]::FindWindowEx($main,[IntPtr]::Zero,'PartyMicPageTransition',$null) -eq [IntPtr]::Zero) 'Gain input immediately reveals live controls during fade'
  Gain 106 100
  [void][Visual]::SetForegroundWindow($main)
+ [void][Visual]::GetWindowRect((Control 114),[ref]$r)
  [void][Visual]::SetCursorPos($r.L-24,$r.T+20)
  [void](Send 114 0x2a3);Start-Sleep -Milliseconds 220
  $b=[Visual]::Capture((Control 114));$b.Save((Join-Path $LogDirectory 'hover-base.png'));$b.Dispose()

@@ -1,217 +1,248 @@
 {
-  "date": "2026-10-18",
-  "version": "0.5.0",
+  "date": "2026-10-19",
+  "version": "0.5.1",
+  "release_status": "prerelease; GUI validated, audio Smoke and Soak failed",
   "platform": "Windows 11 Pro x64, build 26300",
   "session": "interactive console, standard user token",
-  "exe_sha256": "d846e701b2fa65a335a41572b0076458a65e57382067314d95827cab5882fb2a",
-  "audio_test_exe_sha256": "99e556f20a96e32449366d76d4ecb3a0e5f87940f2496abb61c8766421a30b79",
-  "effects_test_exe_sha256": "cdebcc736c93ec4c6483f0f767e15524936780965a5a73a9c831955afd474370",
+  "exe_sha256": "40a89e4298c56e4f4e8c80a9bd05f2a20ba7e31c240a65679c480542bc3252e6",
+  "audio_test_exe_sha256": "26adff9dcad94cc375dd43d4d4b8bf988d8ea507fc43a815028e3d18ea957157",
   "gui_passed": true,
-  "audio_smoke_passed": true,
-  "audio_fidelity_passed": true,
-  "audio_soak_passed": true,
   "core_tests_passed": true,
   "core_platforms": [
     "Fedora x64",
     "Windows x64"
   ],
+  "audio_smoke_passed": false,
+  "audio_fidelity_passed": true,
+  "audio_soak_passed": false,
+  "audio_smoke": {
+    "ObservedAt": "2026-10-19T10:50:33.6460412+08:00",
+    "Mode": "Smoke",
+    "ExitCode": 1,
+    "TestExecutableSHA256": "26ADFF9DCAD94CC375DD43D4D4B8BF988D8EA507FC43A815028E3D18EA957157",
+    "Player": null,
+    "RequestedSeconds": null
+  },
+  "audio_failure_observation": {
+    "music_only_frames": 74880,
+    "rms": 0.017334,
+    "selected_997_amplitude": 0.0237649,
+    "other_1499_amplitude": 0.000120475,
+    "discontinuities": 1,
+    "longest_zero_run_frames": 2822,
+    "longest_zero_run_ms": 58.791666666666664,
+    "assertion_max_zero_run_frames_exclusive": 48,
+    "host_cpu_load_percent_observed_after_failure": 97,
+    "cause": "Not isolated; high CPU load observed, no background processes terminated; GUI was closed for this standalone helper test"
+  },
   "microphone": "Logitech Brio 90",
-  "virtual_audio_driver": "VB-CABLE Pack45, driver 3.3.1.7, signed",
+  "virtual_audio_driver": "VB-CABLE Pack45, signed",
   "playback_device": "Mi Monitor (NVIDIA High Definition Audio), HDMI -> display 3.5 mm -> speakers",
-  "music_full_scale_rms": 0.017678,
-  "music_quarter_scale_rms": 0.00441957,
-  "both_muted_rms": 0.0,
-  "stopped_rms": 0.0,
-  "microphone_activity_rms": 0.0234199,
-  "dropped_frames": 0,
-  "music_starved_frames": 0,
-  "mic_starved_frames": 0,
-  "immediate_restart_cycles": 20,
-  "full_stream_restart_cycles": 50,
-  "process_handle_count_before": 195,
-  "process_handle_count_after": 195,
-  "physical_output_rejection_passed": true,
-  "source_exit_stop_passed": true,
-  "smoke_observed_at": "2026-10-18T19:15:14.3937634+08:00",
-  "soak": {
-    "passed": true,
-    "seconds": 90,
-    "observed_at": "2026-10-18T19:17:10.3958394+08:00",
-    "handles_before": 235,
-    "handles_after": 235,
-    "dropped_frames": 0,
-    "music_starved_frames": 0,
-    "mic_starved_frames": 0,
-    "final_capture_discontinuities": 0
-  },
-  "resampler": {
-    "kind": "64-tap Blackman-windowed sinc, 1024 phase intervals",
-    "core_gain_tolerance_db": 0.1,
-    "positive_and_negative_drift_passed": true,
-    "overflow_and_starvation_history_reset_passed": true,
-    "cable_gain_tolerance_db": 0.5,
-    "cable_frequencies": [
-      {
-        "hz": 1000,
-        "rms": 0.017677,
-        "relative_to_1k_db": 0.0,
-        "absolute_db": -0.00033913,
-        "dropped_frames": 0,
-        "music_starved_frames": 0
-      },
-      {
-        "hz": 8000,
-        "rms": 0.0176777,
-        "relative_to_1k_db": 0.000347009,
-        "absolute_db": 7.87837e-06,
-        "dropped_frames": 0,
-        "music_starved_frames": 0
-      },
-      {
-        "hz": 12000,
-        "rms": 0.0176774,
-        "relative_to_1k_db": 0.000227936,
-        "absolute_db": -0.000111194,
-        "dropped_frames": 0,
-        "music_starved_frames": 0
-      },
-      {
-        "hz": 16000,
-        "rms": 0.0176774,
-        "relative_to_1k_db": 0.000186415,
-        "absolute_db": -0.000152716,
-        "dropped_frames": 0,
-        "music_starved_frames": 0
-      },
-      {
-        "hz": 20000,
-        "rms": 0.0176806,
-        "relative_to_1k_db": 0.00176617,
-        "absolute_db": 0.00142704,
-        "dropped_frames": 0,
-        "music_starved_frames": 0
-      }
-    ],
-    "observed_at": "2026-10-18T19:15:30.3470426+08:00",
-    "measurement_scope": "Synthetic tones; RMS gain only, not a THD/phase or subjective listening assessment"
-  },
   "preview": {
     "passed": true,
-    "observed_at": "2026-10-18T19:24:22.3616211+08:00",
-    "microphone_gain_zero_rms": 0,
-    "microphone_auto_stop_seconds": 15,
-    "microphone_rms": 0.00981790191397779,
-    "microphone_peak": 0.1151123046875,
-    "mixed_recording_seconds": 3.06,
-    "mixed_recording_rms": 0.0043957974534626415,
-    "clipped_samples": 0,
-    "selected_hdmi": true,
-    "stops_mixing_before_playback": true,
-    "stop_replay_and_completion_passed": true,
-    "close_during_recording_passed": true,
+    "observed_at": "2026-10-19T10:54:00.0307972+08:00",
+    "recordings": [
+      {
+        "Label": "mic_gain_zero",
+        "Seconds": 1.99,
+        "RMS": 0,
+        "Peak": 0,
+        "ClippedSamples": 0
+      },
+      {
+        "Label": "microphone_auto_stop",
+        "Seconds": 15,
+        "RMS": 0.002645449447739036,
+        "Peak": 0.29644775390625,
+        "ClippedSamples": 0
+      },
+      {
+        "Label": "music_mix",
+        "Seconds": 3.11,
+        "RMS": 0.004470235318345524,
+        "Peak": 0.024993896484375,
+        "ClippedSamples": 0
+      }
+    ],
+    "hdmi_selected": true,
+    "stop_replay_completion_and_close_passed": true,
     "subjective_listening_confirmed": false
   },
   "ui": {
     "layout_passed": true,
     "visual_passed": true,
-    "observed_at": "2026-10-18T19:24:40.0979598+08:00",
-    "pages": [
-      "mixer",
-      "recorder",
-      "guide"
-    ],
+    "screen_sequence_passed": true,
+    "observed_at": "2026-10-19T10:49:48.8666069+08:00",
     "dpi_percent": 125,
-    "page_transition": "200 ms content bitmap crossfade; native controls laid out once",
     "page_fade_cadence": [
       {
         "Page": 201,
-        "CommandMs": 62.1987,
-        "PaintFrames": 12,
-        "MaxPaintGapMs": 16,
-        "DurationMs": 204
-      },
-      {
-        "Page": 202,
-        "CommandMs": 61.859100000000005,
-        "PaintFrames": 10,
-        "MaxPaintGapMs": 32,
+        "CommandMs": 65.27850000000001,
+        "PaintFrames": 13,
+        "MaxPaintGapMs": 31,
         "DurationMs": 203
       },
       {
-        "Page": 201,
-        "CommandMs": 67.0492,
+        "Page": 202,
+        "CommandMs": 71.006,
         "PaintFrames": 13,
         "MaxPaintGapMs": 16,
         "DurationMs": 203
       },
       {
+        "Page": 201,
+        "CommandMs": 76.92490000000001,
+        "PaintFrames": 13,
+        "MaxPaintGapMs": 31,
+        "DurationMs": 203
+      },
+      {
         "Page": 202,
-        "CommandMs": 84.9103,
+        "CommandMs": 61.116400000000006,
         "PaintFrames": 12,
-        "MaxPaintGapMs": 16,
+        "MaxPaintGapMs": 31,
         "DurationMs": 203
       }
     ],
-    "cadence_scope": "Own-window WM_PAINT timing; not display presentation/vsync measurement",
-    "rapid_wheel_and_drag_passed": true,
-    "high_resolution_wheel_passed": true,
-    "gain_input_dismisses_overlay_passed": true,
-    "native_controls_stationary_during_fade": true,
+    "screen_sequence": {
+      "ObservedAt": "2026-10-19T10:49:27.1580202+08:00",
+      "ExeSHA256": "40A89E4298C56E4F4E8C80A9BD05F2A20BA7E31C240A65679C480542BC3252E6",
+      "Passed": true,
+      "Measurement": "Physical screen pixels from own content region; 320x240 samples",
+      "Sequences": [
+        {
+          "Destination": 202,
+          "CommandMs": 84.936,
+          "Frames": 26,
+          "Backwards": 0,
+          "OffPath": 0,
+          "WorstBacktrack": 0,
+          "MaxResidual": 0.18756087044512212,
+          "MaxCaptureGapMs": 80.53139999999999
+        },
+        {
+          "Destination": 201,
+          "CommandMs": 76.4372,
+          "Frames": 27,
+          "Backwards": 0,
+          "OffPath": 0,
+          "WorstBacktrack": 0,
+          "MaxResidual": 0.19169784607556567,
+          "MaxCaptureGapMs": 107.82290000000003
+        },
+        {
+          "Destination": 203,
+          "CommandMs": 52.277300000000004,
+          "Frames": 25,
+          "Backwards": 0,
+          "OffPath": 0,
+          "WorstBacktrack": 0,
+          "MaxResidual": 0.1462442650577748,
+          "MaxCaptureGapMs": 85.06949999999998
+        },
+        {
+          "Destination": 202,
+          "CommandMs": 65.3541,
+          "Frames": 24,
+          "Backwards": 0,
+          "OffPath": 0,
+          "WorstBacktrack": 0,
+          "MaxResidual": 0.17221557742888768,
+          "MaxCaptureGapMs": 89.8252
+        }
+      ]
+    },
+    "rapid_navigation_preserves_shield_passed": true,
+    "scroll_resize_minimize_interruptions_passed": true,
+    "rapid_wheel_drag_and_high_resolution_wheel_passed": true,
     "slider_screen_difference_ratio": 0,
-    "gdi_objects_before": 42,
-    "gdi_objects_after": 42,
-    "idle_process_cpu_seconds_over_two_seconds": 0.03125,
+    "gdi_objects_before": 40,
+    "gdi_objects_after": 40,
+    "idle_process_cpu_seconds_over_two_seconds": 0,
     "system_animations_enabled": true,
     "reduced_motion_off_path_tested": false,
     "multi_monitor_dpi_tested": false,
-    "icons_embedded": true,
-    "window_icons_passed": true
-  },
-  "effects_probe": {
-    "completed": true,
-    "changes_effect_states": false,
-    "streams_started": false,
-    "other": {
-      "aec_control_hresult": "0x80004002",
-      "aec_enumerated": true,
-      "aec_state": "off",
-      "aec_can_set": false,
-      "noise_suppression_state": "on"
-    },
-    "communications": {
-      "aec_control_hresult": "0x00000000",
-      "aec_enumerated": true,
-      "aec_state": "on",
-      "aec_can_set": false
-    },
-    "integrated_into_app": false,
-    "echo_reduction_measured": false
+    "screen_reader_tested": false,
+    "cadence_scope": "Own-window WM_PAINT; not DWM presentation/vsync",
+    "screen_scope": "Own-window physical screen samples; 81-108 ms maximum gaps can miss shorter flashes"
   },
   "actual_player": {
-    "passed": false,
-    "observed_at": "2026-10-18T19:26:59.7544559+08:00",
-    "requested_seconds": 60,
-    "completed_seconds": 0,
-    "reason": "cloudmusic.exe session found, but captured music RMS was zero; test stopped at signal-presence assertion"
+    "performed_this_version": false,
+    "previous_failure_version": "0.5.0",
+    "previous_failure_date": "2026-10-18",
+    "previous_reason": "cloudmusic.exe session existed but captured music RMS was zero; awaiting current playback confirmation"
   },
+  "audio_code_changes_since_0_5_0": false,
   "limitations": [
-    "No current-version human speech/listening A/B assessment or voice-client call validation",
-    "No software/native AEC integrated; loudspeaker pickup remains possible",
-    "NetEase-specific live playback check did not complete because capture was silent",
-    "No 60-minute soak, end-to-end latency, THD or phase measurement",
-    "No game/ACE compatibility test, native MSVC/CI run or application Authenticode signing",
-    "ASan/UBSan build unavailable: Fedora sanitizer runtime libraries missing"
+    "Current Smoke failed; no claim of full hardware verification",
+    "Screen sampling cannot rule out short unsampled flashes",
+    "No current controlled human speech/headphones-versus-speakers listening A/B or voice-client call validation",
+    "No AEC integrated; loudspeaker music pickup remains possible",
+    "No 60-minute soak, latency, THD, multi-monitor DPI or screen reader test",
+    "No game/ACE compatibility certification, native MSVC CI or Authenticode signing"
   ],
   "failed_attempts": [
     {
-      "scope": "first page-fade candidate",
-      "exe_sha256": "89d949b6ac28156293e3a65763417a2a6877a7c27a19e764085f5debcd9820b3",
-      "result": "Focus notification canceled the prepared overlay; corrected, final hash passed full GUI suite",
-      "evidence_directory": "gui-tests-run1"
+      "exe_sha256": "03c93ab9e94457a78a46d753ddd1aa24fe8888ca55d7d40522ad5b9f119a3204",
+      "scope": "first UI candidate",
+      "result": "Page sequences passed; hover intermediate snapshot arrived after animation completed"
     },
     {
-      "scope": "sanitizer configure",
-      "result": "CMake compiler link check failed because /usr/lib64/libasan.so.8.0.0 is missing; not an application test pass"
+      "exe_sha256": "9477c126374dc718626a34104dbf0fcf486dbf1717551bd6a25a841ccb3a3d03",
+      "scope": "test capture implementation",
+      "result": "Direct cross-process WM_PRINTCLIENT DC produced black pixels; PrintWindow client-only failed. Replaced hover probe with visible own-control GetPixel; final full suite passed"
+    },
+    {
+      "scope": "initial GitHub push",
+      "result": "GitHub rejected workflow file because OAuth credential lacks workflow scope; workflow retained as docs/workflows/build.yml template; source push succeeded"
     }
-  ]
+  ],
+  "fidelity": {
+    "ObservedAt": "2026-10-19T10:55:19.1177716+08:00",
+    "Mode": "Fidelity",
+    "ExitCode": 0,
+    "TestExecutableSHA256": "26ADFF9DCAD94CC375DD43D4D4B8BF988D8EA507FC43A815028E3D18EA957157",
+    "Player": null,
+    "RequestedSeconds": null,
+    "frequencies": [
+      {
+        "hz": 1000,
+        "absolute_db": 0.000130737
+      },
+      {
+        "hz": 8000,
+        "absolute_db": -2.02914e-05
+      },
+      {
+        "hz": 12000,
+        "absolute_db": -9.38413e-05
+      },
+      {
+        "hz": 16000,
+        "absolute_db": -0.000180061
+      },
+      {
+        "hz": 20000,
+        "absolute_db": -0.0231171
+      }
+    ]
+  },
+  "soak": {
+    "ObservedAt": "2026-10-19T10:55:37.4084880+08:00",
+    "Mode": "Soak",
+    "ExitCode": 1,
+    "TestExecutableSHA256": "26ADFF9DCAD94CC375DD43D4D4B8BF988D8EA507FC43A815028E3D18EA957157",
+    "Player": null,
+    "RequestedSeconds": 90
+  },
+  "soak_observation": {
+    "requested_seconds": 90,
+    "completed_seconds_before_failure": 9.093,
+    "longest_zero_run_frames": 577,
+    "longest_zero_run_ms": 12.020833333333334,
+    "capture_discontinuities": 1,
+    "dropped_frames": 0,
+    "music_starved_frames": 0,
+    "mic_starved_frames": 100
+  }
 }
