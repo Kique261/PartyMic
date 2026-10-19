@@ -3,9 +3,7 @@ Unicode true
 !include "LogicLib.nsh"
 !include "x64.nsh"
 !include "nsDialogs.nsh"
-!include "StrFunc.nsh"
 !include "FileFunc.nsh"
-${StrStr}
 
 !ifndef APP_VERSION
   !error "APP_VERSION is required"
@@ -111,12 +109,15 @@ Function DetectCable
     ClearErrors
     EnumRegKey $1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render" $0
     IfErrors render_done
+    StrCmp $1 "" render_done
     IntOp $0 $0 + 1
     ReadRegDWORD $2 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\$1" "DeviceState"
+    IntOp $2 $2 & 1
     ${If} $2 = 1
-      ReadRegStr $2 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\$1\Properties" "{a45c254e-df1c-4efd-8020-67d146a850e0},14"
-      ${StrStr} $3 $2 "CABLE Input ("
-      ${If} $3 != ""
+      ReadRegStr $2 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\$1\Properties" "{a45c254e-df1c-4efd-8020-67d146a850e0},2"
+      ReadRegStr $3 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\$1\Properties" "{b3f8fa53-0004-438e-9003-51a46e139bfc},6"
+      ${If} $2 == "CABLE Input"
+      ${AndIf} $3 == "VB-Audio Virtual Cable"
         StrCpy $DriverReady 1
         Goto render_done
       ${EndIf}
@@ -132,12 +133,15 @@ Function DetectCable
     ClearErrors
     EnumRegKey $1 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture" $0
     IfErrors capture_done
+    StrCmp $1 "" capture_done
     IntOp $0 $0 + 1
     ReadRegDWORD $2 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\$1" "DeviceState"
+    IntOp $2 $2 & 1
     ${If} $2 = 1
-      ReadRegStr $2 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\$1\Properties" "{a45c254e-df1c-4efd-8020-67d146a850e0},14"
-      ${StrStr} $3 $2 "CABLE Output ("
-      ${If} $3 != ""
+      ReadRegStr $2 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\$1\Properties" "{a45c254e-df1c-4efd-8020-67d146a850e0},2"
+      ReadRegStr $3 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\$1\Properties" "{b3f8fa53-0004-438e-9003-51a46e139bfc},6"
+      ${If} $2 == "CABLE Output"
+      ${AndIf} $3 == "VB-Audio Virtual Cable"
         StrCpy $DriverReady 1
         Goto capture_done
       ${EndIf}
