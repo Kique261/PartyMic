@@ -1,0 +1,17 @@
+PartyMic · Third-party notices
+
+The distributed application uses LLVM / libc++ / libc++abi / libunwind,
+MinGW-w64 runtime and winpthreads. Their notices are installed in licenses/.
+The Setup EXE uses NSIS with its zlib compression module; see
+licenses/NSIS-LICENSE.txt. The NSIS source is available at
+https://nsis.sourceforge.io/.
+
+VB-CABLE is a separate product of VB-Audio / Vincent Burel, distributed
+under its own terms. It is not included in this installer. Official site:
+https://vb-audio.com/Cable/
+VB-CABLE is donationware; contributions to its author are welcome.
+
+PartyMic's visual styling was inspired by CC Switch:
+https://github.com/farion1231/cc-switch
+No CC Switch source code, application logo or image assets are included.
+PartyMic's microphone logo and interface icons are created by this project.

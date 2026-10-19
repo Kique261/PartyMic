@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
-project(PartyMic VERSION 0.5.2 LANGUAGES CXX)
+project(PartyMic VERSION 0.5.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# Keep native Windows builds self-contained, like the cross-built distribution.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 include(CTest)
 
 add_library(partymic_core src/core/mixer.cpp)

@@ -24,3 +24,22 @@ jobs:
       - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --parallel
       - run: ctest --test-dir build --output-on-failure
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install NSIS
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Download pinned cross compiler
+        run: |
+          curl --fail --location --retry 3 --output llvm-mingw.tar.xz https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64.tar.xz
+          echo '534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda  llvm-mingw.tar.xz' | sha256sum --check
+          tar -xf llvm-mingw.tar.xz
+      - name: Build application and Setup EXE
+        run: bash scripts/build-windows.sh "$PWD/llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PartyMic-Setup
+          path: |
+            dist/PartyMic-*-Setup.exe
+            dist/SHA256SUMS.txt
