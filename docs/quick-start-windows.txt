@@ -1,6 +1,6 @@
-PartyMic 0.5.1 预览版 · Windows 11 x64
+PartyMic 0.5.2 预览版 · Windows 11 x64
 
-这是在 Fedora 上编译的 Windows 64 位桌面程序。新版改善数字音乐高频衰减与切页动效，侧栏包含混音、录音试听和使用指南；实际测试范围与 EXE 哈希见 docs/verification.md。真人通话主观音质及腾讯 ACE 兼容性尚未验收。
+这是在 Fedora 上编译的 Windows 64 位桌面程序。新版修复音频线程阻塞、启动欠载，并增加输出缓冲以改善断音，侧栏包含混音、录音试听和使用指南；实际测试范围与 EXE 哈希见 docs/verification.md。真人通话主观音质及腾讯 ACE 兼容性尚未验收。
 
 1. 安装官方 VB-CABLE，按安装程序提示重启。下载地址见 README.md。
 2. 将 Windows 默认播放、默认通信播放、语音软件扬声器都设为耳机；不要选 CABLE Input。
@@ -27,4 +27,4 @@ EXE 不需要管理员权限，C++ 运行库已静态链接。VB-CABLE 驱动需
 
 详细说明见 README.md，实际验证记录见 docs/verification.md。
 
-本版界面和录音试听已验证；当前音频 Smoke 在高负载下检出断音，尚未完成完整硬件验收。请参阅 docs/verification.md。
+本版严格合成音源 Smoke、五频点频响及 90 秒连续性测试通过。输出缓冲从该设备的 22 ms 增加至 60 ms，会增加延迟；当前网易云实播、真人通话及长时间测试仍待验收。界面和试听回归范围请参阅 docs/verification.md。

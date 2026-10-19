@@ -2,11 +2,11 @@
 
 Windows 11 桌面音频工具：采集指定音乐软件的音频，与实体麦克风混合，输出到 VB-CABLE，让语音客户端把两者作为一个麦克风接收。可选择网易云音乐或其他有 Windows 音频会话的软件。
 
-**当前版本：0.5.1 预览版。** 修复切页时目标页面先出现、再被旧快照盖住的绘制顺序，减少切页准备和动画重绘开销。最终 EXE 已通过 Fedora / Windows 核心测试、实际屏幕序列、滑块与布局检查，以及 Brio 90 录音和 HDMI 回放流程验证。
+**当前版本：0.5.2 预览版。** 针对断音，将进程检查移出音频线程，按实际收到的帧预填充，并为输出增加调度缓冲。远程 Win11 的严格 Smoke、70 次启停、五个频点频响和完整 90 秒合成音源连续性测试通过；该轮未检出达到 1 ms 的静音缺口，音乐/人声输入欠载和队列丢帧均为 0。
 
-**本版测试限制：** 独立音频 Smoke 在高负载环境中检出约 59 ms 静音缺口，尚未通过本轮完整硬件验收，因此作为预览版发布。测试后观察到远端 CPU 负载约 97%，原因仍需隔离；没有关闭其他程序。完整结果、EXE 哈希及待办见 [验证记录](docs/verification.md)和[开发状态](docs/development-status.md)。音频算法延续 0.5.0，历史测试不等同于本版重测通过。
+输出缓冲由该设备原有的 22 ms 改为 60 ms，以增加调度余量；会增加延迟，端到端延迟尚未测量。旧版与中间候选失败记录保留，完整范围、最终 EXE 哈希及待办见 [验证记录](docs/verification.md)和[开发状态](docs/development-status.md)。GitHub Windows MSVC / Linux CI 已启用并通过。
 
-网易云当前实播、真人听感 A/B 与 LOL / ACE 兼容性尚未验收。本程序只使用标准 Windows 音频接口和官方 VB-CABLE，不承诺反作弊认证或零封号风险。昨日问题与今日修改见 [10 月 18 日交接](docs/handoff-2026-10-18.md)和[10 月 19 日交接](docs/handoff-2026-10-19.md)。
+当前网易云实播、真人听感 A/B 与 LOL / ACE 兼容性尚未验收，因此继续作为预览版发布。本程序只使用标准 Windows 音频接口和官方 VB-CABLE，不承诺反作弊认证或零封号风险。最新修复过程与继续事项见 [连续性开发交接](docs/handoff-2026-10-19-continuity.md)。
 
 构建产物：`dist/PartyMic.exe`；包含使用说明和运行库声明的完整压缩包：`dist/PartyMic-win11-x64.zip`。将压缩包拷贝到 Windows 11 x64 后解压，阅读其中的 `使用说明.txt`，安装官方 VB-CABLE 后运行 EXE。校验值见 `dist/SHA256SUMS.txt`。这个交叉编译版本已经静态链接 C++ 运行库，仅导入 Windows 系统 DLL，无需携带 libc++、libunwind、libwinpthread 或 MSVC 运行库 DLL。
 
@@ -17,7 +17,7 @@ Windows 11 桌面音频工具：采集指定音乐软件的音频，与实体麦
 - [发行下载](https://github.com/Kique261/PartyMic/releases)：下载 `PartyMic-win11-x64.zip` 和 `SHA256SUMS.txt`；解压后运行 `PartyMic.exe`。发行包不包含虚拟声卡驱动。
 - Windows 11 x64、一个实体麦克风，以及从 [VB-Audio 官网](https://vb-audio.com/Cable/) 安装的 VB-CABLE。首次安装驱动需要管理员权限和重启；PartyMic 日常运行使用普通用户权限。
 - 推荐佩戴耳机，避免音响中的音乐再次进入麦克风。摄像头自带麦克风也可选择。
-- [构建流程模板](docs/workflows/build.yml) 可放到 `.github/workflows/build.yml` 启用 Windows / Linux CI；当前 GitHub 凭据缺少 `workflow` 权限，未启用 Actions。硬件、听感及游戏兼容性需在真实 Windows 设备上验收。
+- GitHub Actions 已启用 Windows MSVC 和 Linux 构建、核心测试，Windows EXE 作为 artifact 保存。配置在 `.github/workflows/build.yml`；真实硬件、听感及游戏兼容性仍需单独验收。
 
 ```powershell
 Get-FileHash .\PartyMic.exe -Algorithm SHA256
@@ -98,7 +98,7 @@ ctest --test-dir build -C Release --output-on-failure
 .\build\Release\PartyMic.exe
 ```
 
-如果机器装有多个 SDK，可在配置时添加 `-DCMAKE_SYSTEM_VERSION=10.0.22621.0`，或者你已安装的更新 SDK 版本。使用 MSVC 原生编译时，默认 MSVC 运行库为动态链接，目标电脑可能需要 Microsoft Visual C++ 2015–2022 x64 Redistributable；这与已经提供的静态 C++ 运行库交叉编译产物不同。仓库包含 [GitHub Actions 模板](docs/workflows/build.yml)，包括 Windows 构建与 EXE artifact；将其放到 `.github/workflows/build.yml` 并使用含 `workflow` 权限的凭据提交后生效。目前没有已执行的 Windows 原生 CI 记录。
+如果机器装有多个 SDK，可在配置时添加 `-DCMAKE_SYSTEM_VERSION=10.0.22621.0`，或者你已安装的更新 SDK 版本。使用 MSVC 原生编译时，默认 MSVC 运行库为动态链接，目标电脑可能需要 Microsoft Visual C++ 2015–2022 x64 Redistributable；这与已经提供的静态 C++ 运行库交叉编译产物不同。仓库已启用 `.github/workflows/build.yml`，包含 Windows MSVC / Linux 构建、核心测试与 Windows EXE artifact。2026-10-19 的首轮双平台 CI 已通过；硬件测试由交互桌面单独运行，CI artifact 不等于完整设备验收。
 
 Windows 真机可手动运行 `build\Release\windows_audio_smoke.exe --run`（交叉编译产物位于 `build-windows/windows_audio_smoke.exe`）。它使用 Brio 90、立体声 VB-CABLE 和两个自建低音量测试音进程，验证音源隔离、增益、静音、实体麦克风输入、启停和源进程退出。会短暂向默认播放设备播放测试音并采集麦克风，只记录数值，不保存录音；需要登录用户的交互桌面。该硬件测试不会随 CTest 自动运行。另可使用 `--soak 90` 做短时连续混音检查，或在网易云正在播放时使用 `--player cloudmusic.exe 60` 验证真实音源。`scripts/run-windows-audio-test.ps1` 可保存 UTF-8 数值日志和测试 EXE 哈希；不保存录音。
 

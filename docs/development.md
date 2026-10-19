@@ -1,6 +1,6 @@
 # 开发、更新与远程验证
 
-当前分发为 0.5.1 预览版：界面、核心和录音试听通过，当前音频 Smoke 失败，完整硬件验收未通过。恢复开发先读 [最新交接](handoff-2026-10-19.md)。入口为 [README](../README.md)，待办见 [development-status.md](development-status.md)，数据路径见 [architecture.md](architecture.md)。
+当前分发为 0.5.2 预览版：严格合成音源 Smoke、Fidelity、90 秒连续性与 70 次启停通过，当前网易云实播和真人听感仍待确认。恢复开发先读 [最新交接](handoff-2026-10-19-continuity.md)。入口为 [README](../README.md)，待办见 [development-status.md](development-status.md)，数据路径见 [architecture.md](architecture.md)。
 
 ## 环境与构建
 
@@ -44,11 +44,14 @@ scp -F /path/to/windows-ssh.conf build-windows/PartyMic.exe partymic-windows:Par
 .\windows_audio_smoke.exe --run
 .\windows_audio_smoke.exe --fidelity
 .\windows_audio_smoke.exe --soak 90
+.\windows_audio_smoke.exe --diagnose 30
 .\windows_audio_smoke.exe --player cloudmusic.exe 60
 .\test-windows-preview-ui.ps1 -Executable .\PartyMic.exe -LogDirectory .\tests -AudioTestExecutable .\windows_audio_smoke.exe
 ```
 
 `windows_audio_effects.exe` 仅探测 Brio 90 在 Other/Communications 两种私有流类别下的效果状态，初始化后不启动采集、不更改设备效果或保存音频；不要将“接口可用”写成消回声效果通过。
+
+`--diagnose` 仅用于收集连续性诊断，完成不代表验收通过；严格 Smoke / Soak 仍要求原有 <1 ms 静音阈值，Soak 额外要求捕获不连续为 0。helper 的音源与后台采集线程注册 MMCSS；采集释放包后分析，主线程打印不会暂停读包。
 
 音频 runner 必须同时检查退出码和 `ALL ... CHECKS PASSED` 完成标记。传递原生命令行参数时使用 `[string[]]`，避免一个参数退化为字符串索引，造成“进程退出正常但测试根本没运行”。
 
@@ -62,11 +65,11 @@ UI 线程控制工作线程启停。`AudioEngine` 使用互斥锁读取设置，
 
 ## 仍需推进
 
-真人主观对比、语音客户端编码/降噪、60 分钟稳定性、端到端延迟、热插拔、可选麦克风 AEC、设置持久化、应用代码签名、MSVC 原生构建与 CI。腾讯 LOL/ACE 兼容性没有认证；不得通过关闭或绕过反作弊来“验证”。
+真人主观对比、语音客户端编码/降噪、60 分钟稳定性、端到端延迟、热插拔、可选麦克风 AEC、设置持久化、应用代码签名。腾讯 LOL/ACE 兼容性没有认证；不得通过关闭或绕过反作弊来“验证”。
 
 
 ## GitHub 维护
 
-公开仓库为 `Kique261/PartyMic`，主分支 `main`。提交源码、图标、脚本及不含私人路径的数值证据；`build*`、`dist/`、录音、密钥与连接配置不入库。发行页提供 EXE / ZIP、源码包和 SHA256SUMS；保留 0.5.0 本地回退包。当前 0.5.1 为预览版，不能把硬件失败隐藏在“全部通过”标记下。
+公开仓库为 `Kique261/PartyMic`，主分支 `main`。提交源码、图标、脚本及不含私人路径的数值证据；`build*`、`dist/`、录音、密钥与连接配置不入库。发行页提供 EXE / ZIP、源码包和 SHA256SUMS；保留 0.5.0 本地回退包。当前 0.5.2 为预览版；合成音源验收不等于当前网易云、真人通话或游戏兼容性通过。旧版和中间候选失败继续保留。
 
-当前 OAuth 凭据可推送代码和创建发行，但缺少 `workflow` scope，GitHub 拒绝提交 `.github/workflows/build.yml`。模板存放在 `docs/workflows/build.yml`；维护者之后可在本机执行 `gh auth refresh -h github.com -s workflow`，再将模板复制到 `.github/workflows/build.yml` 并提交。不要把访问令牌写入脚本或 Markdown；目前没有实际 CI 运行成绩。
+2026-10-19 用户已完成 `workflow` 授权，配置已移到 `.github/workflows/build.yml` 并推送。Windows MSVC 与 Linux 构建、核心测试实际通过（运行 `39196630425`）。首次 MSVC 编译暴露 Windows SDK 的 `small` 宏与局部变量冲突，已重命名修复。后续提交继续检查对应 Actions 结果；不要把访问令牌写入脚本或 Markdown。

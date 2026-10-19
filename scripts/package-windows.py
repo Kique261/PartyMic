@@ -104,6 +104,8 @@ def main():
         'execution_level': 'asInvoker',
         'import_dlls': dlls,
         'windows_runtime_tested': runtime_verified,
+        'windows_runtime_scope': ('GUI, preview, synthetic Smoke/Fidelity/90-second Soak; '
+                                  'not actual player, voice call or game/ACE validation') if runtime_verified else None,
         'windows_runtime_evidence': 'docs/test-results/windows-runtime.json' if runtime_verified else None,
         'ace_compatibility_tested': False,
     }
