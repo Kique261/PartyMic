@@ -78,23 +78,23 @@ class App {
             return static_cast<HICON>(
                 LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101), IMAGE_ICON, w, h, 0));
         };
-        auto small = load(GetSystemMetricsForDpi(SM_CXSMICON, dpi), GetSystemMetricsForDpi(SM_CYSMICON, dpi));
-        auto large = load(GetSystemMetricsForDpi(SM_CXICON, dpi), GetSystemMetricsForDpi(SM_CYICON, dpi));
-        auto brand = load(px(32), px(32));
-        if (!small || !large || !brand) {
-            for (auto h : {small, large, brand})
+        auto loaded_small = load(GetSystemMetricsForDpi(SM_CXSMICON, dpi), GetSystemMetricsForDpi(SM_CYSMICON, dpi));
+        auto loaded_large = load(GetSystemMetricsForDpi(SM_CXICON, dpi), GetSystemMetricsForDpi(SM_CYICON, dpi));
+        auto loaded_brand = load(px(32), px(32));
+        if (!loaded_small || !loaded_large || !loaded_brand) {
+            for (auto h : {loaded_small, loaded_large, loaded_brand})
                 if (h)
                     DestroyIcon(h);
             throw std::runtime_error("Cannot load PartyMic icon resource");
         }
-        SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small));
-        SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(large));
+        SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(loaded_small));
+        SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(loaded_large));
         for (auto h : {small_icon, large_icon, brand_icon})
             if (h)
                 DestroyIcon(h);
-        small_icon = small;
-        large_icon = large;
-        brand_icon = brand;
+        small_icon = loaded_small;
+        large_icon = loaded_large;
+        brand_icon = loaded_brand;
     }
     void stop_motion() {
         page_moving = badge_moving = false;
