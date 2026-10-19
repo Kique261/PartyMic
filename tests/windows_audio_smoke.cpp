@@ -3,6 +3,7 @@
 #include "windows/audio_engine.h"
 #include "windows/devices.h"
 #include <audioclient.h>
+#include <avrt.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <exception>
+#include <utility>
 
 using namespace partymic;
 using Microsoft::WRL::ComPtr;
@@ -27,6 +30,14 @@ struct Handle {
         if (value)
             CloseHandle(value);
     }
+};
+struct AudioTask {
+    DWORD index = 0;
+    HANDLE value = AvSetMmThreadCharacteristicsW(L"Audio", &index);
+    AudioTask() {
+        if (value) AvSetMmThreadPriority(value, AVRT_PRIORITY_HIGH);
+    }
+    ~AudioTask() { if (value) AvRevertMmThreadCharacteristics(value); }
 };
 WAVEFORMATEX wave_format() {
     WAVEFORMATEX f{};
@@ -58,6 +69,7 @@ void initialize(IAudioClient *client) {
           "Test audio initialize");
 }
 int tone(double frequency, const wchar_t *event_name) {
+    AudioTask audio_task;
     Handle stop{OpenEventW(SYNCHRONIZE, FALSE, event_name)};
     if (!stop.value)
         throw std::runtime_error("Tone stop event unavailable");
@@ -181,32 +193,65 @@ struct Metrics {
 class CableCapture {
     ComPtr<IAudioClient> client_;
     ComPtr<IAudioCaptureClient> capture_;
+    Handle stop_{CreateEventW(nullptr, TRUE, FALSE, nullptr)};
+    std::mutex mutex_;
+    Metrics accumulated_;
+    std::exception_ptr failure_;
+    std::thread worker_;
 
   public:
     explicit CableCapture(const std::wstring &id) : client_(endpoint_client(id)) {
         initialize(client_.Get());
         check(client_->GetService(IID_PPV_ARGS(&capture_)), "Cable capture service");
+        if (!stop_.value) throw std::runtime_error("Cable observer stop event");
+        UINT32 capacity = 0;
+        check(client_->GetBufferSize(&capacity), "Cable observer capacity");
+        std::vector<float> scratch(capacity * channels);
         check(client_->Start(), "Cable capture start");
-    }
-    ~CableCapture() { client_->Stop(); }
-    Metrics measure(DWORD duration) {
-        Metrics result;
-        const auto end = GetTickCount64() + duration;
-        do {
-            for (unsigned n = 0; n < 128; ++n) {
-                UINT32 count = 0;
-                check(capture_->GetNextPacketSize(&count), "Cable packet size");
-                if (!count)
-                    break;
-                BYTE *bytes = nullptr;
-                DWORD flags = 0;
-                check(capture_->GetBuffer(&bytes, &count, &flags, nullptr, nullptr), "Cable read");
-                result.add(reinterpret_cast<float *>(bytes), count, flags);
-                check(capture_->ReleaseBuffer(count), "Cable release");
+        // Keep draining while the test's main thread prints or changes controls.
+        // Otherwise slow console/PowerShell logging can overrun the observer and
+        // masquerade as a gap in the mixer. Never discard discontinuity flags.
+        worker_ = std::thread([this, scratch = std::move(scratch)]() mutable {
+            try {
+                ComScope com;
+                AudioTask audio_task;
+                while (WaitForSingleObject(stop_.value, 3) == WAIT_TIMEOUT) {
+                    for (unsigned n = 0; n < 128; ++n) {
+                        UINT32 count = 0;
+                        check(capture_->GetNextPacketSize(&count), "Cable packet size");
+                        if (!count) break;
+                        BYTE* bytes = nullptr;
+                        DWORD flags = 0;
+                        check(capture_->GetBuffer(&bytes, &count, &flags, nullptr, nullptr), "Cable read");
+                        if (count * channels > scratch.size()) {
+                            capture_->ReleaseBuffer(count);
+                            throw std::runtime_error("Cable observer packet exceeds capacity");
+                        }
+                        const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0;
+                        if (!silent) std::copy_n(reinterpret_cast<float*>(bytes), count * channels, scratch.data());
+                        check(capture_->ReleaseBuffer(count), "Cable release");
+                        // Analysis happens after ReleaseBuffer; the capture API
+                        // is not held while calculating spectra.
+                        std::lock_guard lock(mutex_);
+                        accumulated_.add(silent ? nullptr : scratch.data(), count, flags);
+                    }
+                }
+            } catch (...) {
+                std::lock_guard lock(mutex_);
+                failure_ = std::current_exception();
             }
-            Sleep(3);
-        } while (GetTickCount64() < end);
-        return result;
+        });
+    }
+    ~CableCapture() {
+        SetEvent(stop_.value);
+        if (worker_.joinable()) worker_.join();
+        client_->Stop();
+    }
+    Metrics measure(DWORD duration) {
+        Sleep(duration);
+        std::lock_guard lock(mutex_);
+        if (failure_) std::rethrow_exception(failure_);
+        return std::exchange(accumulated_, Metrics{});
     }
     Metrics settled_measure() {
         measure(400);
@@ -223,6 +268,19 @@ void report(const wchar_t *label, const Metrics &m) {
                << L" selected_997=" << m.amplitude(0) << L" other_1499=" << m.amplitude(1)
                << L" discontinuities=" << m.discontinuities << L" zero_frames=" << m.zero_frames
                << L" longest_zero_run=" << m.longest_zero_run << std::endl;
+}
+void report_engine(const AudioEngine &engine) {
+    std::wcout << L"DIAGNOSTICS render_buffer_frames=" << engine.render_buffer_frames()
+               << L" mmcss_registered=" << engine.mmcss_registered()
+               << L" max_wake_gap_us=" << engine.max_wake_gap_us()
+               << L" max_process_check_us=" << engine.max_process_check_us()
+               << L" max_render_us=" << engine.max_render_us()
+               << L" music_discontinuities=" << engine.music_discontinuities()
+               << L" mic_discontinuities=" << engine.mic_discontinuities()
+               << L" music_silent_frames=" << engine.music_silent_frames() << std::endl;
+    std::wcout << L"INPUT music_starved_frames=" << engine.music_starved_frames()
+               << L" mic_starved_frames=" << engine.mic_starved_frames()
+               << L" dropped_frames=" << engine.dropped_frames() << std::endl;
 }
 void analyzer_check() {
     std::vector<float> samples(76800 * 2);
@@ -269,7 +327,8 @@ AudioSelection selection_for(DWORD pid, const std::wstring &executable, std::wst
     require(!selection.output_id.empty() && !capture.empty(), "VB-CABLE stereo endpoints found");
     return selection;
 }
-int player_test(const std::wstring &executable, unsigned seconds, DWORD explicit_pid = 0) {
+int player_test(const std::wstring &executable, unsigned seconds, DWORD explicit_pid = 0,
+                bool diagnostic = false) {
     DWORD pid = explicit_pid;
     if (!pid)
         for (const auto &app : audio_applications())
@@ -291,6 +350,7 @@ int player_test(const std::wstring &executable, unsigned seconds, DWORD explicit
     await_running(engine);
     const auto music = reader.settled_measure();
     report(L"player_music_only", music);
+    report_engine(engine);
     require(music.frames > 48000 && music.rms() > 0.00001 && music.peak <= 1.001,
             "Actual player audio reaches virtual microphone");
     settings.music_muted = true;
@@ -318,10 +378,11 @@ int player_test(const std::wstring &executable, unsigned seconds, DWORD explicit
                    << engine.music_starved_frames() << L" mic_starved_frames=" << engine.mic_starved_frames()
                    << L" longest_zero_run=" << m.longest_zero_run << L" capture_discontinuities="
                    << m.discontinuities << std::endl;
-        if (explicit_pid)
-            require(m.longest_zero_run < 48 && engine.music_starved_frames() == 0 &&
-                        engine.dropped_frames() == 0,
-                    "Continuous test tone has no >=1 ms gaps, input starvation or overflow");
+        report_engine(engine);
+        if (explicit_pid && !diagnostic)
+            require(m.longest_zero_run < 48 && m.discontinuities == 0 &&
+                        engine.music_starved_frames() == 0 && engine.dropped_frames() == 0,
+                    "Continuous test tone has no >=1 ms gaps, capture loss, input starvation or overflow");
     }
     require(GetProcessHandleCount(GetCurrentProcess(), &handles_after), "Read final own handle count");
     std::wcout << L"soak_handles_before=" << handles_before << L" after=" << handles_after
@@ -331,7 +392,8 @@ int player_test(const std::wstring &executable, unsigned seconds, DWORD explicit
     const auto stopped = reader.settled_measure();
     report(L"player_stopped", stopped);
     require(stopped.rms() < 0.00001, "Stop removes actual player and microphone output");
-    std::wcout << (explicit_pid ? L"ALL SYNTHETIC SOAK CHECKS PASSED" : L"ALL ACTUAL PLAYER CHECKS PASSED")
+    std::wcout << (diagnostic ? L"ALL CONTINUITY DIAGNOSTICS COMPLETED"
+                            : (explicit_pid ? L"ALL SYNTHETIC SOAK CHECKS PASSED" : L"ALL ACTUAL PLAYER CHECKS PASSED"))
                << std::endl;
     return 0;
 }
@@ -352,6 +414,7 @@ int run() {
     await_running(engine);
     const auto music = reader.settled_measure();
     report(L"music_only", music);
+    report_engine(engine);
     require(music.frames > 48000, "Cable capture receives frames");
     require(music.amplitude(0) > 0.003, "Selected application tone reaches cable");
     require(music.amplitude(1) < music.amplitude(0) * 0.05, "Other application tone excluded (>26 dB)");
@@ -361,6 +424,7 @@ int run() {
     engine.settings(settings);
     const auto quarter = reader.settled_measure();
     report(L"music_quarter", quarter);
+    report_engine(engine);
     require(quarter.rms() > music.rms() * 0.22 && quarter.rms() < music.rms() * 0.28,
             "Music gain affects measured RMS (25% +/-3%)");
     require(quarter.longest_zero_run < 48, "Quarter-volume tone has no silence gap of 1 ms or longer");
@@ -380,6 +444,7 @@ int run() {
     engine.settings(settings);
     const auto combined = reader.settled_measure();
     report(L"combined", combined);
+    report_engine(engine);
     require(combined.amplitude(0) > quarter.amplitude(0) * 0.5 && combined.peak <= 1.001,
             "Music and microphone can run together");
     require(combined.longest_zero_run < 48, "Combined tone has no silence gap of 1 ms or longer");
@@ -496,14 +561,15 @@ int wmain(int argc, wchar_t **argv) {
                 throw std::runtime_error("Player test duration must be 1..3600 seconds");
             return player_test(argv[2], static_cast<unsigned>(seconds));
         }
-        if (argc == 3 && std::wstring(argv[1]) == L"--soak") {
+        if (argc == 3 && (std::wstring(argv[1]) == L"--soak" || std::wstring(argv[1]) == L"--diagnose")) {
+            const bool diagnostic = std::wstring(argv[1]) == L"--diagnose";
             const int seconds = std::stoi(argv[2]);
             if (seconds < 1 || seconds > 90)
                 throw std::runtime_error("Synthetic soak duration must be 1..90 seconds");
             ChildTone source(997);
             Sleep(700);
             const auto result = player_test(L"windows_audio_smoke.exe", static_cast<unsigned>(seconds),
-                                            source.process.dwProcessId);
+                                            source.process.dwProcessId, diagnostic);
             source.finish();
             return result;
         }
@@ -511,7 +577,7 @@ int wmain(int argc, wchar_t **argv) {
             return run();
         if (argc == 2 && std::wstring(argv[1]) == L"--fidelity")
             return fidelity_test();
-        std::wcout << L"Use --run, --fidelity, --soak 90, or --player cloudmusic.exe 60. No recordings."
+        std::wcout << L"Use --run, --fidelity, --soak 90, --diagnose 30, or --player cloudmusic.exe 60. No recordings."
                    << std::endl;
         return 0;
     } catch (const std::exception &e) {

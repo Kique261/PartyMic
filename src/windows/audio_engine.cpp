@@ -8,6 +8,7 @@
 #include <functiondiscoverykeys_devpkey.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -15,6 +16,15 @@
 namespace partymic {
 using Microsoft::WRL::ComPtr;
 namespace {
+unsigned long long microseconds() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+void update_max(std::atomic<unsigned long long>& value, unsigned long long next) {
+    // Each maximum has a single writer (stream worker or process watcher).
+    if (next > value.load(std::memory_order_relaxed))
+        value.store(next, std::memory_order_relaxed);
+}
 class Event {
 public:
     explicit Event(bool manual = false) : handle_(CreateEventW(nullptr, manual, FALSE, nullptr)) {
@@ -38,6 +48,46 @@ struct AudioTask {
     HANDLE handle = AvSetMmThreadCharacteristicsW(L"Audio", &index);
     AudioTask() { if (handle) AvSetMmThreadPriority(handle, AVRT_PRIORITY_HIGH); }
     ~AudioTask() { if (handle) AvRevertMmThreadCharacteristics(handle); }
+};
+
+// Toolhelp snapshots and process-name allocations must never delay WASAPI.
+// Monitor only the selected PID/name; no target-process handles are opened.
+class ProcessWatch {
+public:
+    ProcessWatch(DWORD pid, std::wstring executable, HANDLE stop,
+                 std::atomic<unsigned long long>& max_check)
+        : worker_([this, pid, executable = std::move(executable), stop, &max_check] {
+            try {
+                HANDLE waits[] = {stop, cancel_};
+                for (;;) {
+                    const auto wait = WaitForMultipleObjects(2, waits, FALSE, 2000);
+                    if (wait == WAIT_OBJECT_0 || wait == WAIT_OBJECT_0 + 1) return;
+                    if (wait != WAIT_TIMEOUT) { state_ = State::failed; return; }
+                    const auto begin = microseconds();
+                    const bool matches = process_matches(pid, executable);
+                    update_max(max_check, microseconds() - begin);
+                    if (!matches) { state_ = State::exited; return; }
+                }
+            } catch (...) { state_ = State::failed; }
+        }) {}
+    ~ProcessWatch() {
+        SetEvent(cancel_);
+        if (worker_.joinable()) worker_.join();
+    }
+    void check_source() const {
+        switch (state_.load()) {
+        case State::exited:
+            throw std::runtime_error("Music application exited. Refresh and select the new process.");
+        case State::failed:
+            throw std::runtime_error("Music application monitoring failed. Refresh and select it again.");
+        case State::valid: break;
+        }
+    }
+private:
+    enum class State { valid, exited, failed };
+    Event cancel_{true};
+    std::atomic<State> state_{State::valid};
+    std::thread worker_;
 };
 
 WAVEFORMATEX format() {
@@ -174,6 +224,7 @@ struct Stream {
     ComPtr<IAudioRenderClient> render;
     UINT32 buffer_frames = 0;
     bool started = false;
+    unsigned long long discontinuities = 0, silent_frames = 0;
     ~Stream() {
         if (started && render) {
             try { finish_render(); } catch (...) {}
@@ -232,6 +283,8 @@ struct Stream {
             UINT32 frames = 0;
             DWORD flags = 0;
             check(capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr), "Read capture audio");
+            if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) ++discontinuities;
+            if (flags & AUDCLNT_BUFFERFLAGS_SILENT) silent_frames += frames;
             queue.push(reinterpret_cast<const float*>(data), frames,
                 (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0);
             check(capture->ReleaseBuffer(frames), "Release capture packet");
@@ -265,6 +318,10 @@ void AudioEngine::start(AudioSelection selection) {
     active_ = true;
     dropped_frames_ = 0;
     music_starved_frames_ = mic_starved_frames_ = 0;
+    max_wake_gap_us_ = max_process_check_us_ = max_render_us_ = 0;
+    music_discontinuities_ = mic_discontinuities_ = music_silent_frames_ = 0;
+    render_buffer_frames_ = 0;
+    mmcss_registered_ = false;
     set_status(L"正在初始化音频设备…");
     try { worker_ = std::thread(&AudioEngine::run, this, std::move(selection)); }
     catch (...) { active_ = false; CloseHandle(stop_event_); stop_event_ = nullptr; throw; }
@@ -281,11 +338,13 @@ void AudioEngine::run(AudioSelection selection) {
     try {
         ComScope com;
         AudioTask audio_task;
+        mmcss_registered_ = audio_task.handle != nullptr;
         if (!selection.music_pid || !process_matches(selection.music_pid, selection.music_executable))
             throw std::runtime_error("Music application changed or exited. Refresh and select it again.");
         Stream music, microphone, output;
         output.client = activate_endpoint(selection.output_id, eRender);
         output.initialize(false, false);
+        render_buffer_frames_ = output.buffer_frames;
         microphone.client = activate_endpoint(selection.mic_id, eCapture);
         microphone.initialize(true, false);
         music.client = activate_process(selection.music_pid, stop_event_);
@@ -296,16 +355,23 @@ void AudioEngine::run(AudioSelection selection) {
             Mixer mixer;
             std::vector<float> music_samples(output.buffer_frames * channels);
             std::vector<float> mic_samples(output.buffer_frames * channels);
+            ProcessWatch source_watch(selection.music_pid, selection.music_executable,
+                                      stop_event_, max_process_check_us_);
             music.start();
             microphone.start();
-            // Independent capture endpoints can deliver their first packets on
-            // different engine periods. Keep a small lead before render starts.
-            const auto prefill_deadline = GetTickCount64() + 30;
+            // Process loopback can deliver its first packet later than the mic.
+            // Wait for actual queued frames, rather than assuming 30 ms elapsed
+            // means both captures are ready. A paused source must still start.
+            const auto prefill_deadline = GetTickCount64() + 100;
+            const auto prefill_frames = std::min<unsigned>(sample_rate * 60 / 1000,
+                sample_rate / 50 + output.buffer_frames);
             HANDLE capture_waits[] = {stop_event_, music.ready, microphone.ready};
             while (GetTickCount64() < prefill_deadline &&
                 WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
                 music.drain(music_queue);
                 microphone.drain(mic_queue);
+                if (music_queue.size_frames() >= prefill_frames &&
+                    mic_queue.size_frames() >= prefill_frames) break;
                 const auto wait = WaitForMultipleObjects(3, capture_waits, FALSE, 5);
                 if (wait == WAIT_FAILED) check(HRESULT_FROM_WIN32(GetLastError()), "Wait for capture prefill");
             }
@@ -315,24 +381,27 @@ void AudioEngine::run(AudioSelection selection) {
             output.start();
             set_status(L"正在混音 → CABLE Output。请在语音客户端选择该录音设备。配戴耳机避免回声。");
             HANDLE waits[] = {stop_event_, music.ready, microphone.ready, output.ready};
-            ULONGLONG last_process_check = GetTickCount64();
+            auto last_wake = microseconds();
             for (;;) {
                 auto wait = WaitForMultipleObjects(4, waits, FALSE, 10);
                 if (wait == WAIT_OBJECT_0) break;
                 if (wait == WAIT_FAILED) check(HRESULT_FROM_WIN32(GetLastError()), "Wait for audio");
+                const auto woke = microseconds();
+                update_max(max_wake_gap_us_, woke - last_wake);
+                last_wake = woke;
                 // Never reattach to a new PID automatically; restart is explicit.
-                if (GetTickCount64() - last_process_check >= 2000) {
-                    if (!process_matches(selection.music_pid, selection.music_executable))
-                        throw std::runtime_error("Music application exited. Refresh and select the new process.");
-                    last_process_check = GetTickCount64();
-                }
+                source_watch.check_source();
                 music.drain(music_queue);
                 microphone.drain(mic_queue);
+                music_discontinuities_ = music.discontinuities;
+                mic_discontinuities_ = microphone.discontinuities;
+                music_silent_frames_ = music.silent_frames;
                 UINT32 padding = 0;
                 check(output.client->GetCurrentPadding(&padding), "Read output padding");
                 if (padding > output.buffer_frames) throw std::runtime_error("Invalid output padding");
                 const auto frames = output.buffer_frames - padding;
                 if (!frames) continue;
+                const auto render_begin = microseconds();
                 auto m = std::span<float>(music_samples.data(), frames * channels);
                 auto v = std::span<float>(mic_samples.data(), frames * channels);
                 const auto controls = settings();
@@ -347,6 +416,7 @@ void AudioEngine::run(AudioSelection selection) {
                 const auto levels = mixer.mix(m, v,
                     {reinterpret_cast<float*>(data), frames * channels}, controls);
                 check(output.render->ReleaseBuffer(frames, 0), "Write virtual cable output");
+                update_max(max_render_us_, microseconds() - render_begin);
                 music_level_ = levels.music;
                 mic_level_ = levels.mic;
                 output_level_ = levels.output;

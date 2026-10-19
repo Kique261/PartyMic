@@ -30,6 +30,16 @@ public:
     unsigned long long dropped_frames() const { return dropped_frames_.load(); }
     unsigned long long music_starved_frames() const { return music_starved_frames_.load(); }
     unsigned long long mic_starved_frames() const { return mic_starved_frames_.load(); }
+    // Scalar diagnostics only: no audio, target-process handles or logging on
+    // the streaming thread. Values remain available after stop().
+    unsigned long long max_wake_gap_us() const { return max_wake_gap_us_.load(); }
+    unsigned long long max_process_check_us() const { return max_process_check_us_.load(); }
+    unsigned long long max_render_us() const { return max_render_us_.load(); }
+    unsigned long long music_discontinuities() const { return music_discontinuities_.load(); }
+    unsigned long long mic_discontinuities() const { return mic_discontinuities_.load(); }
+    unsigned long long music_silent_frames() const { return music_silent_frames_.load(); }
+    unsigned render_buffer_frames() const { return render_buffer_frames_.load(); }
+    bool mmcss_registered() const { return mmcss_registered_.load(); }
 private:
     void run(AudioSelection selection);
     void set_status(std::wstring text);
@@ -39,6 +49,11 @@ private:
     std::atomic<float> music_level_ = 0, mic_level_ = 0, output_level_ = 0, duck_gain_ = 1;
     std::atomic<unsigned long long> dropped_frames_ = 0;
     std::atomic<unsigned long long> music_starved_frames_ = 0, mic_starved_frames_ = 0;
+    std::atomic<unsigned long long> max_wake_gap_us_ = 0, max_process_check_us_ = 0, max_render_us_ = 0;
+    std::atomic<unsigned long long> music_discontinuities_ = 0, mic_discontinuities_ = 0;
+    std::atomic<unsigned long long> music_silent_frames_ = 0;
+    std::atomic<unsigned> render_buffer_frames_ = 0;
+    std::atomic<bool> mmcss_registered_ = false;
     mutable std::mutex mutex_;
     MixSettings settings_;
     std::wstring status_ = L"就绪：请选择音乐软件、实体麦克风和虚拟声卡。";

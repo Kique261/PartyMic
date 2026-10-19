@@ -389,7 +389,7 @@ class App {
         ui::line(dc, px(24), px(base), px(196), px(base), ui::border);
         ui::icon(dc, ui::Icon::Headphones, rect(26, base + 23, 18, 18, false), ui::teal);
         txt(L"本地音频 · 随时可控", 54, base + 19, 150, 26, small_font, ui::muted, false);
-        txt(L"PartyMic  0.5.1", 26, base + 67, 180, 24, small_font, ui::muted, false);
+        txt(L"PartyMic  0.5.2", 26, base + 67, 180, 24, small_font, ui::muted, false);
         const int delta = logical_width() - design_width;
         const wchar_t *titles[] = {L"混音工作台", L"录音与试听", L"使用指南"};
         const wchar_t *subtitles[] = {L"喜欢的音乐，和你的声音一起出发。",
