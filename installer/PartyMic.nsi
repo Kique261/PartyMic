@@ -164,14 +164,14 @@ Function DriverPage
     ${NSD_CreateLabel} 0 0 100% 24u "未检测到已启用的标准 VB-CABLE 线路。可以先安装 PartyMic，再安装官方驱动。"
   ${EndIf}
   Pop $DriverLabel
-  ${NSD_CreateLabel} 0 32u 100% 45u "首次使用：打开 VB-Audio 官网，下载 Windows 驱动包，解压后以管理员身份运行 VBCABLE_Setup_x64.exe，完成后重启。$\r$\n$\r$\nVB-CABLE 为 VB-Audio 的 donationware，使用遵循其官方许可。"
+  ${NSD_CreateLabel} 0 28u 100% 43u "首次使用：打开 VB-Audio 官网，下载 Windows 驱动包，解压后以管理员身份运行 VBCABLE_Setup_x64.exe，完成后重启。$\r$\n$\r$\nVB-CABLE 为 VB-Audio 的 donationware，使用遵循其官方许可。"
   Pop $DriverLabel
-  ${NSD_CreateButton} 0 85u 155u 20u "打开 VB-CABLE 官方网站"
+  ${NSD_CreateButton} 0 77u 155u 20u "打开 VB-CABLE 官方网站"
   Pop $DriverLink
   ${NSD_OnClick} $DriverLink OpenCableSite
-  ${NSD_CreateLabel} 0 110u 100% 20u "本向导只打开官网，不下载、不捆绑或自动安装驱动。"
+  ${NSD_CreateLabel} 0 102u 100% 12u "本向导只打开官网，不下载、不捆绑或自动安装驱动。"
   Pop $DriverLabel
-  ${NSD_CreateCheckbox} 0 143u 100% 16u "创建桌面快捷方式"
+  ${NSD_CreateCheckbox} 0 121u 100% 14u "创建桌面快捷方式"
   Pop $DesktopCheck
   ${NSD_SetState} $DesktopCheck $DesktopEnabled
   ${NSD_OnClick} $DesktopCheck DesktopChanged
