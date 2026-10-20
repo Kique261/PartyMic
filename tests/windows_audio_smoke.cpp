@@ -22,6 +22,18 @@ using namespace partymic;
 using Microsoft::WRL::ComPtr;
 namespace {
 constexpr double pi = 3.14159265358979323846;
+// Opt in to separate test logs; never rotate the user's application evidence.
+struct TestDiagnostics {
+    TestDiagnostics() {
+        wchar_t directory[32768];
+        const auto length = GetEnvironmentVariableW(L"PARTYMIC_TEST_LOG_DIR", directory, 32768);
+        if (length && length < 32768) {
+            diagnostics::start("audio-hardware-test", std::filesystem::path(directory) /
+                std::to_wstring(GetCurrentProcessId()));
+        }
+    }
+    ~TestDiagnostics() { diagnostics::stop(); }
+};
 struct ComScope {
     ComScope() { check(CoInitializeEx(nullptr, COINIT_MULTITHREADED), "COM"); }
     ~ComScope() { CoUninitialize(); }
@@ -157,6 +169,10 @@ int mic_probe(bool communications) {
     check(client->Stop(),"Independent mic stop");capture.Reset();client.Reset();
     std::wcout<<L"MIC_PROBE communications="<<communications<<L" frames="<<frames<<L" nonzero_frames="<<nonzero
         <<L" rate="<<rate<<L" endpoint_muted="<<state.muted<<L" volume="<<state.volume<<std::endl;
+    diagnostics::write("test.microphone.result", "communications=" + std::to_string(communications) +
+        " frames=" + std::to_string(frames) + " nonzero_frames=" + std::to_string(nonzero) +
+        " rate=" + std::to_string(rate) + " endpoint_muted=" + std::to_string(state.muted) +
+        " volume=" + std::to_string(state.volume));
     if(frames<rate)throw std::runtime_error("Independent microphone delivered too few frames");
     return 0;
 }
@@ -169,6 +185,8 @@ void independent_mic_child(bool communications) {
     CloseHandle(process.hThread);Handle handle{process.hProcess};
     if(WaitForSingleObject(handle.value,10000)!=WAIT_OBJECT_0)throw std::runtime_error("Independent microphone probe timed out");
     DWORD code=1;check(GetExitCodeProcess(handle.value,&code)?S_OK:HRESULT_FROM_WIN32(GetLastError()),"Read mic probe exit");
+    diagnostics::write("test.microphone.child", "communications=" + std::to_string(communications) +
+        " pid=" + std::to_string(process.dwProcessId) + " exit=" + std::to_string(code));
     if(code)throw std::runtime_error("Independent microphone probe failed");
 }
 struct ChildTone {
@@ -370,13 +388,15 @@ void await_running(AudioEngine &engine) {
     const auto end = GetTickCount64() + 10000;
     while (GetTickCount64() < end) {
         if (!engine.active()) {
+            diagnostics::write("test.startup.failed", std::string("stage=") + engine.stage());
             std::wcout << engine.status() << std::endl;
             throw std::runtime_error("Engine stopped during start");
         }
-        if (engine.status().find(L"CABLE Output") != std::wstring::npos)
+        if (engine.running())
             return;
         Sleep(10);
     }
+    diagnostics::write("test.startup.timeout", std::string("stage=") + engine.stage());
     throw std::runtime_error("Engine startup deadline");
 }
 AudioSelection selection_for(DWORD pid, const std::wstring &executable, std::wstring &capture) {
@@ -634,7 +654,9 @@ int fidelity_test() {
 int wmain(int argc, wchar_t **argv) {
     SetConsoleOutputCP(CP_UTF8);
     _setmode(_fileno(stdout), _O_U8TEXT);
+    TestDiagnostics log;
     try {
+        if (argc > 1) diagnostics::write("test.command", std::wstring(argv[1]));
         ComScope com;
         if (argc == 3 && std::wstring(argv[1]) == L"--mic-check")
             return mic_probe(std::wstring(argv[2]) == L"communications");
@@ -676,6 +698,7 @@ int wmain(int argc, wchar_t **argv) {
                    << std::endl;
         return 0;
     } catch (const std::exception &e) {
+        diagnostics::write("test.error", e.what());
         std::wcout << L"FAIL " << e.what() << std::endl;
         return 1;
     }

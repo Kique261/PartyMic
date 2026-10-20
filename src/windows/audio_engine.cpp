@@ -295,19 +295,30 @@ struct Stream {
         DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
         if (is_capture) flags |= AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
         if (process_loopback) flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
+        diagnostics::write("stream.initialize.begin", std::string("name=") + name +
+            " shared=1 capture=" + std::to_string(is_capture) +
+            " process_loopback=" + std::to_string(process_loopback) +
+            " flags=" + std::to_string(flags) + " sample_rate=48000 channels=2");
         // Capture uses shared event mode with both timing arguments zero.
         // Render uses a 60 ms shared timer buffer, refilled on capture wakes or
         // the 10 ms fallback. The former 22 ms device minimum could underrun
         // after a single scheduling delay under load. Query the actual size.
-        check(client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags, is_capture ? 0 : 600000,
-            0, &wave, nullptr),
-            "Initialize 48 kHz stereo audio stream");
+        const auto initialized = client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags,
+            is_capture ? 0 : 600000, 0, &wave, nullptr);
+        check(initialized, (std::string("Initialize ") + name + " 48 kHz stereo audio stream").c_str());
         if (is_capture) check(client->SetEventHandle(ready), "Set audio wake event");
         check(client->GetBufferSize(&buffer_frames), "Read audio buffer size");
         if (is_capture) check(client->GetService(IID_PPV_ARGS(&capture)), "Get capture client");
         else check(client->GetService(IID_PPV_ARGS(&render)), "Get render client");
+        diagnostics::write("stream.initialize.end", std::string("name=") + name +
+            " buffer_frames=" + std::to_string(buffer_frames));
     }
-    void start() { check(client->Start(), "Start audio stream"); started = true; }
+    void start() {
+        diagnostics::write("stream.start.begin", name);
+        check(client->Start(), (std::string("Start ") + name + " audio stream").c_str());
+        started = true;
+        diagnostics::write("stream.start.end", name);
+    }
     void drain(AudioQueue& queue) {
         // Bounded per iteration so device errors/backlogs cannot starve Stop.
         for (unsigned packet = 0; packet < 128; ++packet) {
@@ -365,6 +376,7 @@ MixSettings AudioEngine::settings() const { std::lock_guard lock(mutex_); return
 void AudioEngine::start(AudioSelection selection) {
     stop();
     ResetEvent(stop_event_); stop_requested_ = false;
+    running_ = false;
     mic_frames_ = music_frames_ = mic_signal_frames_ = rendered_frames_ = 0;
     mark(Stage::validate);
     diagnostics::write("engine.start", L"source=" + selection.music_executable + L" pid=" + std::to_wstring(selection.music_pid) +
@@ -393,6 +405,7 @@ void AudioEngine::stop() {
     request_stop();
     if (worker_.joinable()) worker_.join();
     active_ = false;
+    running_ = false;
     music_level_ = mic_level_ = output_level_ = 0;
 }
 
@@ -459,6 +472,7 @@ void AudioEngine::run(AudioSelection selection) {
             check(output.render->GetBuffer(output.buffer_frames, &initial), "Prime output buffer");
             check(output.render->ReleaseBuffer(output.buffer_frames, AUDCLNT_BUFFERFLAGS_SILENT), "Prime output silence");
             output.start();
+            running_ = true;
             diagnostics::write("engine.running", "shared=1 sample_rate=48000 channels=2");
             set_status(L"正在混音 → CABLE Output。请在语音客户端选择该录音设备。配戴耳机避免回声。");
             HANDLE waits[] = {stop_event_, music.ready, microphone.ready, output.ready};
@@ -515,6 +529,7 @@ void AudioEngine::run(AudioSelection selection) {
                 duck_gain_ = levels.duck_gain;
                 dropped_frames_ = music_queue.dropped_frames() + mic_queue.dropped_frames();
             }
+            running_ = false;
             mark(Stage::release_mic); microphone.close("microphone");
             mark(Stage::release_music); music.close("music");
             mark(Stage::release_output);
@@ -530,6 +545,7 @@ void AudioEngine::run(AudioSelection selection) {
         set_status(L"音频已停止：未知错误。请重新选择设备后启动。");
     }
     music_level_ = mic_level_ = output_level_ = 0;
+    running_ = false;
     mark(Stage::released);
     diagnostics::write("engine.stopped", "all_stream_scopes_released=1 mic_frames=" + std::to_string(mic_frames_.load()));
     active_ = false;

@@ -131,6 +131,7 @@ class App {
                     K32GetProcessMemoryInfo(GetCurrentProcess(), &memory, sizeof(memory));
                     DWORD handles = 0;GetProcessHandleCount(GetCurrentProcess(), &handles);
                     diagnostics::write("runtime.health", std::string("engine=") + std::to_string(engine.active()) +
+                        " running=" + std::to_string(engine.running()) + " stopping=" + std::to_string(engine.stopping()) +
                         " stage=" + engine.stage() + " audio_age_ms=" + std::to_string(engine.active() ? age(engine.progress_tick()) : 0) +
                         " ui_age_ms=" + std::to_string(age(ui_tick.load())) + " preview=" + std::to_string(preview.busy()) +
                         " handles=" + std::to_string(handles) + " gdi=" + std::to_string(GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS)) +

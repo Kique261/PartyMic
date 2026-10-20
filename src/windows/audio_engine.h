@@ -33,6 +33,7 @@ public:
     MixSettings settings() const;
     std::wstring status() const;
     bool active() const { return active_.load(); }
+    bool running() const { return running_.load(); }
     float music_level() const { return music_level_.load(); }
     float mic_level() const { return mic_level_.load(); }
     float output_level() const { return output_level_.load(); }
@@ -66,6 +67,7 @@ private:
     std::atomic<unsigned long long> progress_tick_ = 0, mic_frames_ = 0, music_frames_ = 0;
     std::atomic<unsigned long long> mic_signal_frames_ = 0, rendered_frames_ = 0;
     std::atomic<bool> active_ = false;
+    std::atomic<bool> running_ = false;
     std::atomic<float> music_level_ = 0, mic_level_ = 0, output_level_ = 0, duck_gain_ = 1;
     std::atomic<unsigned long long> dropped_frames_ = 0;
     std::atomic<unsigned long long> music_starved_frames_ = 0, mic_starved_frames_ = 0;
