@@ -66,34 +66,6 @@ public:
         return session.QueryInterface(iid,value);
     }
 };
-constexpr DWORD conversion=AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM|AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
-void formats() {
-    Client client;
-    const DWORD original=conversion|AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
-    auto result=capture_format(&client,original,"test");
-    require(result.flags==AUDCLNT_STREAMFLAGS_EVENTCALLBACK,"Native float keeps event flag without converters");
-    require(std::memcmp(result.wave(),&client.format.Format,sizeof(WAVEFORMATEX))==0,"Exact native WAVEFORMATEX retained");
-    client.format.Format={WAVE_FORMAT_EXTENSIBLE,2,48000,384000,8,32,22};
-    client.format.Samples.wValidBitsPerSample=32;client.format.dwChannelMask=3;
-    client.format.SubFormat={3,0,0x10,{0x80,0,0,0xaa,0,0x38,0x9b,0x71}};
-    result=capture_format(&client,original,"test");
-    require(result.flags==AUDCLNT_STREAMFLAGS_EVENTCALLBACK,"Extensible float recognized");
-    require(std::memcmp(&result.storage,&client.format,sizeof(WAVEFORMATEXTENSIBLE))==0,"Extensible channel mask and valid bits retained");
-    client.format.SubFormat.Data1=1;
-    result=capture_format(&client,original,"test");
-    require(result.flags==original&&result.wave()->wFormatTag==WAVE_FORMAT_IEEE_FLOAT,"PCM uses existing float conversion");
-    for(const auto rate:{44100U,96000U}) {
-        client.format.Format={WAVE_FORMAT_IEEE_FLOAT,2,rate,rate*8,8,32,0};
-        result=capture_format(&client,original,"test");
-        require(result.flags==original&&result.wave()->nSamplesPerSec==48000,"Non-48k source retains resampling");
-    }
-    client.format.Format={WAVE_FORMAT_IEEE_FLOAT,1,48000,192000,4,32,0};
-    result=capture_format(&client,original,"test");
-    require(result.flags==original&&result.wave()->nChannels==2,"Mono source retains channel conversion");
-    client.query_result=E_FAIL;
-    require(capture_format(&client,original,"test").flags==original,"Format query failure retains fallback");
-    require(!client.touched,"Format discovery never initializes, starts, stops or resets a device");
-}
 void subscriptions() {
     Client client;
     {
@@ -113,6 +85,6 @@ void subscriptions() {
 }
 }
 int main() {
-    try{formats();subscriptions();std::cout<<"PASS native format, conversion fallback, subscription release and pending callback lifetime\n";return 0;}
+    try{subscriptions();std::cout<<"PASS subscription release and pending callback lifetime\n";return 0;}
     catch(const std::exception& error){std::cerr<<"FAIL "<<error.what()<<'\n';return 1;}
 }

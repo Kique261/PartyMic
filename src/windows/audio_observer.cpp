@@ -111,32 +111,5 @@ void AudioObserver::attach(IAudioClient* client,IMMDevice* endpoint,const char* 
         diagnostics::write("microphone.endpoint.observe","register_hr="+std::to_string(hr));
     }
 }
-SharedCaptureFormat capture_format(IAudioClient* client,DWORD flags,const char* label) {
-    SharedCaptureFormat result;
-    result.storage.Format={WAVE_FORMAT_IEEE_FLOAT,2,48000,384000,8,32,0};
-    result.flags=flags;
-    WAVEFORMATEX* native=nullptr;
-    const auto hr=client->GetMixFormat(&native);
-    bool direct=false;
-    if(SUCCEEDED(hr)&&native) {
-        bool floating=native->wFormatTag==WAVE_FORMAT_IEEE_FLOAT;
-        if(native->wFormatTag==WAVE_FORMAT_EXTENSIBLE&&native->cbSize>=22) {
-            // WAVEFORMATEX subtype GUID defined by the Windows SDK.
-            static constexpr GUID ieee_float={WAVE_FORMAT_IEEE_FLOAT,0,0x10,{0x80,0,0,0xaa,0,0x38,0x9b,0x71}};
-            floating=IsEqualGUID(reinterpret_cast<WAVEFORMATEXTENSIBLE*>(native)->SubFormat,ieee_float);
-        }
-        direct=floating&&native->nSamplesPerSec==48000&&native->nChannels==2&&
-            native->wBitsPerSample==32&&native->nBlockAlign==8;
-        if(direct) {
-            if(native->wFormatTag==WAVE_FORMAT_EXTENSIBLE)result.storage=*reinterpret_cast<WAVEFORMATEXTENSIBLE*>(native);
-            else result.storage.Format=*native;
-            result.flags&=~(AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM|AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY);
-        }
-        diagnostics::write("capture.native_format","stream="+std::string(label)+" tag="+std::to_string(native->wFormatTag)+
-            " channels="+std::to_string(native->nChannels)+" rate="+std::to_string(native->nSamplesPerSec)+
-            " bits="+std::to_string(native->wBitsPerSample)+" direct="+std::to_string(direct));
-    }else diagnostics::write("capture.native_format","stream="+std::string(label)+" query_hr="+std::to_string(hr));
-    CoTaskMemFree(native);
-    return result;
-}
+
 }

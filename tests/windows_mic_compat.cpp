@@ -21,6 +21,15 @@
 using namespace partymic;
 using Microsoft::WRL::ComPtr;
 namespace {
+// Microsoft's win32metadata endpointvolume.h ABI; MinGW only forward-declares
+// IAudioMeterInformation. Keep a distinct name for native SDK compatibility.
+struct PassiveMeter : IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE GetPeakValue(float*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetMeteringChannelCount(UINT*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetChannelsPeakValues(UINT32, float*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE QueryHardwareSupport(DWORD*) = 0;
+};
+constexpr GUID meter_iid{0xc02216f6,0x8c67,0x4b5b,{0x9d,0x00,0xd0,0x08,0xe7,0x3e,0x00,0x64}};
 struct ComScope {
     ComScope() { check(CoInitializeEx(nullptr, COINIT_MULTITHREADED), "COM"); }
     ~ComScope() { CoUninitialize(); }
@@ -56,8 +65,10 @@ ComPtr<IMMDevice> brio() {
     check(enumerator->GetDevice(id.c_str(), &device), "Brio device");
     return device;
 }
-void state() {
-    auto device = brio();
+void state(bool include_format = true, IMMDevice* endpoint = nullptr) {
+    ComPtr<IMMDevice> device = endpoint;
+    if (!device) device = brio();
+    if (include_format) {
     ComPtr<IAudioClient> format_client;
     check(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
         reinterpret_cast<void**>(format_client.GetAddressOf())), "Format client");
@@ -67,6 +78,7 @@ void state() {
         <<L" rate="<<format->nSamplesPerSec<<L" bits="<<format->wBitsPerSample
         <<L" align="<<format->nBlockAlign<<std::endl;
     CoTaskMemFree(format);format_client.Reset();
+    }
     ComPtr<IAudioEndpointVolume> volume;
     check(device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
         reinterpret_cast<void**>(volume.GetAddressOf())), "Endpoint volume");
@@ -103,7 +115,51 @@ void state() {
                 }
         }
         std::wcout << std::endl;
+        LPWSTR identifier = nullptr;
+        const auto identity_hr = session->GetSessionIdentifier(&identifier);
+        std::wcout << L"SESSION_ID pid=" << pid << L" hr=" << identity_hr
+            << L" value=" << (identifier ? identifier : L"") << std::endl;
+        CoTaskMemFree(identifier);
     }
+}
+void passive_inventory() {
+    std::wcout << L"PASSIVE_ALL no_capture_client=1 tick=" << GetTickCount64() << std::endl;
+    for (const auto role : {eConsole, eMultimedia, eCommunications})
+        std::wcout << L"DEFAULT_CAPTURE role=" << role << L" id=" << default_endpoint_id(eCapture, role) << std::endl;
+    for (const auto& endpoint : endpoints(eCapture)) {
+        std::wcout << L"DEVICE name=" << endpoint.name << L" id=" << endpoint.id << std::endl;
+        try {
+            auto device = device_by_id(endpoint.id, eCapture);
+            state(false, device.Get());
+            ComPtr<PassiveMeter> meter;
+            const auto activated = device->Activate(meter_iid, CLSCTX_ALL, nullptr,
+                reinterpret_cast<void**>(meter.GetAddressOf()));
+            float peak = -1;
+            const auto hr = meter ? meter->GetPeakValue(&peak) : activated;
+            std::wcout << L"METER hr=" << hr << L" peak=" << peak << std::endl;
+        } catch (const std::exception& error) {
+            const std::string message = error.what();
+            std::wcout << L"DEVICE_ERROR " << std::wstring(message.begin(), message.end()) << std::endl;
+        }
+    }
+}
+void passive_meter(unsigned seconds) {
+    // Reading endpoint/session controls does not initialize or start a stream.
+    // Use this before an active probe, which could alter a failing device state.
+    auto device = brio();
+    ComPtr<PassiveMeter> meter;
+    const auto activated = device->Activate(meter_iid, CLSCTX_ALL, nullptr,
+        reinterpret_cast<void**>(meter.GetAddressOf()));
+    state(false);
+    std::wcout << L"PASSIVE no_capture_client=1 meter_hr=" << activated << std::endl;
+    const auto deadline = GetTickCount64() + seconds * 1000ULL;
+    while (GetTickCount64() < deadline) {
+        float peak = -1;
+        const auto hr = meter ? meter->GetPeakValue(&peak) : activated;
+        std::wcout << L"METER tick=" << GetTickCount64() << L" hr=" << hr << L" peak=" << peak << std::endl;
+        Sleep(200);
+    }
+    state(false);
 }
 class Probe {
 public:
@@ -220,6 +276,14 @@ int wmain(int argc,wchar_t** argv) {
     _setmode(_fileno(stdout),_O_U8TEXT);
     try {
         ComScope com;
+        if (argc == 2 && std::wstring(argv[1]) == L"snapshot-all") {
+            passive_inventory(); return 0;
+        }
+        if (argc == 3 && std::wstring(argv[1]) == L"snapshot") {
+            const auto seconds = std::stoi(argv[2]);
+            if (seconds < 1 || seconds > 10) throw std::runtime_error("Snapshot duration must be 1..10 seconds");
+            passive_meter(static_cast<unsigned>(seconds)); return 0;
+        }
         state();
         if(argc==1)return 0;
         if(argc!=3)throw std::runtime_error("Use [wavein|directsound|other|communications] seconds (1..30)");

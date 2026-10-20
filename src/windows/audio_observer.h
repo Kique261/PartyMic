@@ -19,12 +19,4 @@ private:
     struct State;
     std::unique_ptr<State> state_;
 };
-struct SharedCaptureFormat {
-    WAVEFORMATEXTENSIBLE storage{};
-    DWORD flags=0;
-    const WAVEFORMATEX* wave() const {return &storage.Format;}
-};
-// Prefer the exact shared engine format when it is already 48 kHz stereo
-// float. Otherwise preserve the established WASAPI conversion path.
-SharedCaptureFormat capture_format(IAudioClient* client, DWORD flags, const char* label);
 }

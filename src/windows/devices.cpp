@@ -82,6 +82,20 @@ std::wstring default_endpoint_id(EDataFlow flow, ERole role) {
     return result;
 }
 
+ComPtr<IMMDevice> device_by_id(const std::wstring& id, EDataFlow required_flow) {
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    check(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+        IID_PPV_ARGS(&enumerator)), "Create device enumerator");
+    ComPtr<IMMDevice> device;
+    check(enumerator->GetDevice(id.c_str(), &device), "Find selected device (refresh devices)");
+    ComPtr<IMMEndpoint> endpoint;
+    check(device.As(&endpoint), "Read device direction");
+    EDataFlow flow{};
+    check(endpoint->GetDataFlow(&flow), "Read endpoint direction");
+    if (flow != required_flow) throw std::runtime_error("Incorrect audio endpoint direction");
+    return device;
+}
+
 std::vector<Endpoint> endpoints(EDataFlow flow) {
     ComPtr<IMMDeviceEnumerator> enumerator;
     check(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
