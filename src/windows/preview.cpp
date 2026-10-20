@@ -1,6 +1,7 @@
 #include "windows/preview.h"
 #include "windows/devices.h"
 #include "windows/diagnostics.h"
+#include "windows/audio_observer.h"
 #include <audioclient.h>
 #include <audiopolicy.h>
 #include <shlobj.h>
@@ -24,6 +25,7 @@ struct ComScope {
 struct Client {
     ComPtr<IAudioClient> audio;
     bool started=false;
+    AudioObserver observer;
     Client(const std::wstring& id,EDataFlow flow){
         bool found=false;
         for(const auto& e:endpoints(flow))if(e.id==id){
@@ -38,10 +40,21 @@ struct Client {
         ComPtr<IMMDevice> device;check(enumerator->GetDevice(id.c_str(),&device),"Preview device");
         check(device->Activate(__uuidof(IAudioClient),CLSCTX_ALL,nullptr,reinterpret_cast<void**>(audio.GetAddressOf())),"Preview activate");
         WAVEFORMATEX format{WAVE_FORMAT_IEEE_FLOAT,2,48000,384000,8,32,0};
-        check(audio->Initialize(AUDCLNT_SHAREMODE_SHARED,AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM|AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,1000000,0,&format,nullptr),"Preview initialize");
+        const DWORD flags=AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM|AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+        const auto capture_wave=flow==eCapture?capture_format(audio.Get(),flags,"preview"):SharedCaptureFormat{};
+        check(audio->Initialize(AUDCLNT_SHAREMODE_SHARED,flow==eCapture?capture_wave.flags:flags,1000000,0,
+            flow==eCapture?capture_wave.wave():&format,nullptr),"Preview initialize");
+        if(flow==eCapture)observer.attach(audio.Get(),device.Get(),"preview");
     }
     void start(){check(audio->Start(),"Preview start");started=true;}
-    void close(){if(!audio)return;diagnostics::write("preview.stream.release.begin");if(started)audio->Stop();audio->Reset();audio.Reset();started=false;diagnostics::write("preview.stream.release.end");}
+    void close(){
+        if(!audio)return;
+        diagnostics::write("preview.stream.release.begin");
+        // No Reset is needed because this client will not be reused.
+        if(started)diagnostics::write("preview.stream.stop.result","stop_hr="+std::to_string(audio->Stop()));
+        observer.close();audio.Reset();started=false;
+        diagnostics::write("preview.stream.release.end");
+    }
     ~Client(){close();}
 };
 std::wstring error_text(const char* text){

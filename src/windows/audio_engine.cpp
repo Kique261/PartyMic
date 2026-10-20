@@ -1,6 +1,7 @@
 #include "windows/audio_engine.h"
 #include "windows/devices.h"
 #include "windows/audio_activation.h"
+#include "windows/audio_observer.h"
 #include "windows/diagnostics.h"
 
 #include <audioclient.h>
@@ -242,6 +243,7 @@ struct Stream {
     ComPtr<IAudioClient> client;
     ComPtr<IAudioCaptureClient> capture;
     ComPtr<IAudioRenderClient> render;
+    AudioObserver observer;
     UINT32 buffer_frames = 0;
     bool started = false;
     unsigned long long discontinuities = 0, silent_frames = 0;
@@ -255,16 +257,17 @@ struct Stream {
 
     void stop() noexcept {
         if (!started) return;
+        // This client is released, never reused. Stop and COM release suffice;
+        // avoid an additional Reset during handoff to an existing capture user.
         const auto stopped = client->Stop();
-        const auto reset = client->Reset();
-        if (FAILED(stopped) || FAILED(reset))
-            diagnostics::write("stream.stop.error", std::string(name) + " stop_hr=" + std::to_string(stopped) + " reset_hr=" + std::to_string(reset));
+        diagnostics::write("stream.stop.result", std::string(name) + " stop_hr=" + std::to_string(stopped));
         started = false;
     }
     void close(const char* label) noexcept {
         if (!client) return;
         diagnostics::write("stream.release.begin", label);
         stop();
+        observer.close();
         // Release all service references on their owning audio thread before
         // the parent client and before waiting for the process watcher/output.
         capture.Reset(); render.Reset(); client.Reset();
@@ -273,7 +276,7 @@ struct Stream {
 
     void finish_render() {
         // Send silence through the downstream virtual cable before releasing
-        // the stream, then discard any remaining WASAPI buffer contents.
+        // the stream. Releasing the client discards its remaining buffer.
         const auto deadline = GetTickCount64() + 250;
         while (started && GetTickCount64() < deadline) {
             UINT32 padding = 0;
@@ -295,6 +298,12 @@ struct Stream {
         DWORD flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
         if (is_capture) flags |= AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
         if (process_loopback) flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
+        auto capture_wave=SharedCaptureFormat{};
+        const WAVEFORMATEX* selected_wave=&wave;
+        if(is_capture&&!process_loopback) {
+            capture_wave=capture_format(client.Get(),flags,name);
+            flags=capture_wave.flags;selected_wave=capture_wave.wave();
+        }
         diagnostics::write("stream.initialize.begin", std::string("name=") + name +
             " shared=1 capture=" + std::to_string(is_capture) +
             " process_loopback=" + std::to_string(process_loopback) +
@@ -304,7 +313,7 @@ struct Stream {
         // the 10 ms fallback. The former 22 ms device minimum could underrun
         // after a single scheduling delay under load. Query the actual size.
         const auto initialized = client->Initialize(AUDCLNT_SHAREMODE_SHARED, flags,
-            is_capture ? 0 : 600000, 0, &wave, nullptr);
+            is_capture ? 0 : 600000, 0, selected_wave, nullptr);
         check(initialized, (std::string("Initialize ") + name + " 48 kHz stereo audio stream").c_str());
         if (is_capture) check(client->SetEventHandle(ready), "Set audio wake event");
         check(client->GetBufferSize(&buffer_frames), "Read audio buffer size");
@@ -429,6 +438,7 @@ void AudioEngine::run(AudioSelection selection) {
         mark(Stage::mic_open);
         microphone.client = activate_endpoint(selection.mic_id, eCapture);
         microphone.initialize(true, false);
+        microphone.observer.attach(microphone.client.Get(),device_by_id(selection.mic_id,eCapture).Get(),"microphone");
         ComPtr<ISimpleAudioVolume> mic_volume;
         if (SUCCEEDED(microphone.client->GetService(IID_PPV_ARGS(&mic_volume)))) {
             BOOL muted = FALSE;float level = 0;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(PartyMic VERSION 0.5.4 LANGUAGES CXX)
+project(PartyMic VERSION 0.5.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,7 +23,7 @@ if(WIN32)
   endif()
   set_source_files_properties(src/windows/app.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/windows/assets/partymic.ico")
   add_executable(PartyMic WIN32
-    src/windows/main.cpp src/windows/devices.cpp src/windows/audio_engine.cpp src/windows/preview.cpp src/windows/diagnostics.cpp src/windows/ui_theme.cpp src/windows/page_transition.cpp
+    src/windows/main.cpp src/windows/devices.cpp src/windows/audio_engine.cpp src/windows/audio_observer.cpp src/windows/preview.cpp src/windows/diagnostics.cpp src/windows/ui_theme.cpp src/windows/page_transition.cpp
     src/windows/app.rc)
   target_compile_definitions(PartyMic PRIVATE UNICODE _UNICODE NOMINMAX
     WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A00000B)
@@ -54,7 +54,31 @@ if(BUILD_TESTING)
       target_compile_options(windows_diagnostics_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
     endif()
     add_test(NAME windows_diagnostics COMMAND windows_diagnostics_tests)
+    add_executable(windows_audio_observer_tests tests/windows_audio_observer_tests.cpp
+      src/windows/audio_observer.cpp src/windows/diagnostics.cpp)
+    target_compile_definitions(windows_audio_observer_tests PRIVATE UNICODE _UNICODE NOMINMAX
+      WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A00000B)
+    target_include_directories(windows_audio_observer_tests PRIVATE src)
+    target_link_libraries(windows_audio_observer_tests PRIVATE ole32 uuid shell32)
+    if(MINGW)
+      target_compile_options(windows_audio_observer_tests PRIVATE -Wall -Wextra -Wpedantic)
+      target_link_options(windows_audio_observer_tests PRIVATE -static)
+    elseif(MSVC)
+      target_compile_options(windows_audio_observer_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME windows_audio_observer COMMAND windows_audio_observer_tests)
     # Hardware test is deliberately opt-in, never an automatic CTest entry.
+    add_executable(windows_mic_compat tests/windows_mic_compat.cpp src/windows/devices.cpp src/windows/diagnostics.cpp)
+    target_compile_definitions(windows_mic_compat PRIVATE UNICODE _UNICODE NOMINMAX
+      WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A00000B)
+    target_include_directories(windows_mic_compat PRIVATE src)
+    target_link_libraries(windows_mic_compat PRIVATE ole32 uuid mmdevapi propsys shell32 winmm dsound dxguid)
+    if(MINGW)
+      target_compile_options(windows_mic_compat PRIVATE -Wall -Wextra -Wpedantic)
+      target_link_options(windows_mic_compat PRIVATE -municode -static)
+    elseif(MSVC)
+      target_compile_options(windows_mic_compat PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
     add_executable(windows_audio_effects tests/windows_audio_effects.cpp src/windows/devices.cpp src/windows/diagnostics.cpp)
     target_compile_definitions(windows_audio_effects PRIVATE UNICODE _UNICODE NOMINMAX
       WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A00000B)
@@ -67,7 +91,7 @@ if(BUILD_TESTING)
       target_compile_options(windows_audio_effects PRIVATE /W4 /permissive- /utf-8 /EHsc)
     endif()
     add_executable(windows_audio_smoke tests/windows_audio_smoke.cpp
-      src/windows/devices.cpp src/windows/audio_engine.cpp src/windows/diagnostics.cpp)
+      src/windows/devices.cpp src/windows/audio_engine.cpp src/windows/audio_observer.cpp src/windows/diagnostics.cpp)
     target_compile_definitions(windows_audio_smoke PRIVATE UNICODE _UNICODE NOMINMAX
       WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A00000B)
     target_link_libraries(windows_audio_smoke PRIVATE partymic_core ole32 uuid mmdevapi propsys avrt shell32)
@@ -78,7 +102,7 @@ if(BUILD_TESTING)
       target_compile_options(windows_audio_smoke PRIVATE /W4 /permissive- /utf-8 /EHsc)
     endif()
     add_executable(windows_audio_record tests/windows_audio_record.cpp
-      src/windows/devices.cpp src/windows/audio_engine.cpp src/windows/diagnostics.cpp)
+      src/windows/devices.cpp src/windows/audio_engine.cpp src/windows/audio_observer.cpp src/windows/diagnostics.cpp)
     target_compile_definitions(windows_audio_record PRIVATE UNICODE _UNICODE NOMINMAX
       WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A00000B)
     target_link_libraries(windows_audio_record PRIVATE partymic_core ole32 uuid mmdevapi propsys avrt shell32)

@@ -1,0 +1,30 @@
+#pragma once
+#include <windows.h>
+#include <mmdeviceapi.h>
+#include <audioclient.h>
+#include <memory>
+
+namespace partymic {
+// Read-only subscriptions. Close on the stream's owning COM thread, before
+// releasing IAudioClient: the registrations themselves hold session references.
+class AudioObserver {
+public:
+    AudioObserver();
+    ~AudioObserver();
+    void attach(IAudioClient* client, IMMDevice* endpoint, const char* label);
+    void close() noexcept;
+    AudioObserver(const AudioObserver&)=delete;
+    AudioObserver& operator=(const AudioObserver&)=delete;
+private:
+    struct State;
+    std::unique_ptr<State> state_;
+};
+struct SharedCaptureFormat {
+    WAVEFORMATEXTENSIBLE storage{};
+    DWORD flags=0;
+    const WAVEFORMATEX* wave() const {return &storage.Format;}
+};
+// Prefer the exact shared engine format when it is already 48 kHz stereo
+// float. Otherwise preserve the established WASAPI conversion path.
+SharedCaptureFormat capture_format(IAudioClient* client, DWORD flags, const char* label);
+}
