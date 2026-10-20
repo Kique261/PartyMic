@@ -2,7 +2,7 @@
 
 ## 安装 PartyMic
 
-1. 在 [PartyMic 发行页面](https://github.com/Kique261/PartyMic/releases) 下载 `PartyMic-0.5.3-Setup.exe`。
+1. 在 [PartyMic 0.5.5 预览版发行页面](https://github.com/Kique261/PartyMic/releases/tag/v0.5.5) 下载 `PartyMic-0.5.5-Setup.exe`。
 2. 退出正在运行的 PartyMic，双击安装程序。
 3. 按向导选择安装位置和是否创建桌面快捷方式，点击安装。
 4. 从开始菜单或桌面打开 PartyMic。

@@ -6,7 +6,7 @@
 
 ## 下载与安装
 
-在 [发行页面](https://github.com/Kique261/PartyMic/releases) 下载 **`PartyMic-0.5.3-Setup.exe`**，双击并按向导完成安装，无需解压 ZIP。
+当前提供 **0.5.5 预览版**。下载 [PartyMic-0.5.5-Setup.exe](https://github.com/Kique261/PartyMic/releases/download/v0.5.5/PartyMic-0.5.5-Setup.exe)，双击并按向导完成安装，无需解压 ZIP。[发行页面](https://github.com/Kique261/PartyMic/releases/tag/v0.5.5) 提供版本说明与 SHA256 校验文件。
 
 - 支持 **Windows 11 x64**，需要一个实体麦克风。
 - 安装到当前 Windows 账户，提供开始菜单、桌面快捷方式和卸载入口。
@@ -26,6 +26,8 @@
 
 推荐使用耳机，避免音响里的音乐再次被麦克风收进去。不要开启麦克风或 CABLE Output 的“侦听此设备”。
 
+停止混音或退出 PartyMic 后，如需继续通话，请在语音软件中手动切回实体麦克风。最小化窗口会继续混音。
+
 ## 调整音量
 
 音乐和人声音量可分别调节，也能单独静音。先从音乐 **25%**、人声 **100%** 开始，根据队友反馈调整。
@@ -40,7 +42,9 @@
 
 ## 帮助
 
-0.5.4 及后续版本可点击侧栏“打开日志文件夹”。日志位置、内容和反馈方法见 [故障排查](docs/troubleshooting.md#运行日志与问题反馈)。日志不包含录音，也不自动上传。
+遇到无声或卡住，可点击侧栏“打开日志文件夹”，记录发生时间并保留日志。日志位置、内容和反馈方法见 [故障排查](docs/troubleshooting.md#运行日志与问题反馈)。日志不包含录音，也不自动上传。
+
+若退出 PartyMic 后，语音软件直接选择 Brio 90 等实体麦克风仍然无声，请按 [实体麦克风无声的排查步骤](docs/troubleshooting.md#退出后语音软件直接选择实体麦克风却无声) 检查 Windows 输入与语音频道。
 
 - [安装、升级与卸载](docs/install.md)
 - [完整使用说明](docs/usage.md)
