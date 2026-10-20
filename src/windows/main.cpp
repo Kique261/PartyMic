@@ -476,7 +476,7 @@ class App {
         ui::line(dc, px(24), px(base), px(196), px(base), ui::border);
         ui::icon(dc, ui::Icon::Headphones, rect(26, base + 23, 18, 18, false), ui::teal);
         txt(L"本地音频 · 随时可控", 54, base + 19, 150, 26, small_font, ui::muted, false);
-        txt(L"PartyMic  0.5.5", 26, base + 67, 180, 24, small_font, ui::muted, false);
+        txt(L"PartyMic  0.5.6", 26, base + 67, 180, 24, small_font, ui::muted, false);
         const int delta = logical_width() - design_width;
         const wchar_t *titles[] = {L"混音工作台", L"录音与试听", L"使用指南"};
         const wchar_t *subtitles[] = {L"喜欢的音乐，和你的声音一起出发。",
@@ -557,7 +557,7 @@ class App {
                                           L"03   在语音软件中选择 CABLE Output"};
                 const wchar_t *hints[] = {L"让网易云先播放，再刷新设备；虚拟声卡选择 CABLE Input。",
                                           L"音乐默认 25%，人声默认 100%。自动压低可按需要开启。",
-                                          L"点击开始混音，音乐与讲话就会一起送入虚拟麦克风。"};
+                                          L"部分语音测试跟随 Windows 默认输入；停用混音后请切回实体麦克风。"};
                 for (int i = 0; i < 3; ++i) {
                     txt(steps[i], 276, 216 + i * 72, 760 + delta, 26, font, ui::ink);
                     txt(hints[i], 312, 245 + i * 72, 720 + delta, 24, small_font, ui::muted);
@@ -665,6 +665,11 @@ class App {
                     value.apps = audio_applications();value.mics = endpoints(eCapture);value.renders = endpoints(eRender);
                     value.default_mic = default_endpoint_id(eCapture,eCommunications);
                     value.default_speaker = default_endpoint_id(eRender,eMultimedia);
+                    // Read roles separately: a client's displayed selection may
+                    // differ from the Windows default it actually follows.
+                    diagnostics::write("capture.defaults", L"read_only=1 console=" +
+                        default_endpoint_id(eCapture,eConsole) + L" multimedia=" +
+                        default_endpoint_id(eCapture,eMultimedia) + L" communications=" + value.default_mic);
                 } catch(const std::exception& error) {value.error = error.what();}
                 catch(...) {value.error = "Unknown device refresh error";}
                 next_devices = std::move(value);refresh_done = true;
@@ -965,7 +970,7 @@ class App {
                         L"%  ·  在语音软件中选择 CABLE Output";
             set_text(detail, text.c_str());
         } else
-            set_text(detail, L"准备好后点击开始混音，在语音软件中选择 CABLE Output。");
+            set_text(detail, L"混音使用 CABLE Output；若跟随 Windows 默认输入，停用后请切回实体麦克风。");
     }
 };
 LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -1095,7 +1100,7 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lpar
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
-    diagnostics::start("0.5.5");
+    diagnostics::start("0.5.6");
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(initialized))
