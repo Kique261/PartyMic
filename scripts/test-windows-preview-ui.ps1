@@ -100,6 +100,7 @@ try {
  Require (![PreviewProbe]::IsWindowEnabled((Control 111))) 'Preview stops mixing before speaker playback'
  Require (![PreviewProbe]::IsWindowEnabled((Control 114))) 'Cannot record while playing back'
  Start-Sleep -Milliseconds 400;Click 115
+ WaitState { [PreviewProbe]::IsWindowEnabled((Control 116)) } 6 'Preview stop did not release playback'
  Require ([PreviewProbe]::IsWindowEnabled((Control 116))) 'Preview can be stopped and replayed'
  Click 116
  WaitState {([PreviewProbe]::AllText($script:main)).Contains('试听结束。')} 10 'Preview did not drain and complete'
