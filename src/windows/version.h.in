@@ -1,0 +1,5 @@
+#pragma once
+// CMake is the single source for UI, diagnostics and Windows file metadata.
+#define PARTYMIC_VERSION "@PROJECT_VERSION@"
+#define PARTYMIC_VERSION_W L"@PROJECT_VERSION@"
+#define PARTYMIC_VERSION_RESOURCE @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0

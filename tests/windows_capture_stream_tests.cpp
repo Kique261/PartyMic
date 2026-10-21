@@ -86,6 +86,9 @@ public:
                          const WAVEFORMATEX* wave, LPCGUID) override {
         if (mode != AUDCLNT_SHAREMODE_SHARED) return E_INVALIDARG;
         if (FAILED(initialize_result)) return initialize_result;
+        // A real OS consumer reads sizeof(WAVEFORMATEX)+cbSize bytes.
+        // Reject a descriptor that promises more than the adapter can hold.
+        if (wave->cbSize > sizeof(initialized) - sizeof(WAVEFORMATEX)) return E_INVALIDARG;
         stream_flags = flags;
         std::memcpy(&initialized, wave, sizeof(WAVEFORMATEX) + wave->cbSize);
         return S_OK;
@@ -96,8 +99,10 @@ public:
     STDMETHOD(IsFormatSupported)(AUDCLNT_SHAREMODE, const WAVEFORMATEX*, WAVEFORMATEX**) override { return E_NOTIMPL; }
     STDMETHOD(GetMixFormat)(WAVEFORMATEX** result) override {
         if (FAILED(query_result)) { *result = nullptr; return query_result; }
-        *result = static_cast<WAVEFORMATEX*>(CoTaskMemAlloc(sizeof(native)));
+        const auto bytes = std::max(sizeof(native), sizeof(WAVEFORMATEX) + size_t(native.Format.cbSize));
+        *result = static_cast<WAVEFORMATEX*>(CoTaskMemAlloc(bytes));
         if (!*result) return E_OUTOFMEMORY;
+        std::memset(*result, 0, bytes);
         std::memcpy(*result, &native, sizeof(native)); return S_OK;
     }
     STDMETHOD(GetDevicePeriod)(REFERENCE_TIME*, REFERENCE_TIME*) override { return E_NOTIMPL; }
@@ -225,6 +230,19 @@ void silent_packets_do_not_require_a_data_pointer() {
                 statistics.signal_frames == 0 && statistics.discontinuities == 1,
             "Silent and discontinuous packet diagnostics remain readable after close");
 }
+void extended_format_does_not_expose_unowned_bytes() {
+    Client client; Device device(client);
+    client.native.Format = {WAVE_FORMAT_EXTENSIBLE, 2, 48000, 384000, 8, 32, 24};
+    client.native.Samples.wValidBitsPerSample = 32;
+    client.native.dwChannelMask = 3;
+    client.native.SubFormat = {3, 0, 0x10, {0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71}};
+    CaptureStream stream(&device, CaptureTiming::polling, "extended-format");
+    stream.start();
+    unsigned frames = 0;
+    stream.drain([&](std::span<const float>, UINT32 count) { frames += count; });
+    require(frames == 2 && client.initialized.Format.cbSize <= 22,
+        "Formats with extra native bytes use a fully owned conversion descriptor");
+}
 void failed_open_or_start_releases_ownership() {
     for (unsigned scenario = 0; scenario < 3; ++scenario) {
         Client client; Device device(client);
@@ -248,6 +266,7 @@ int main() {
         packets_reach_the_consumer();
         consumer_failure_does_not_hold_an_os_packet();
         shared_format_behavior_is_preserved();
+        extended_format_does_not_expose_unowned_bytes();
         silent_packets_do_not_require_a_data_pointer();
         failed_open_or_start_releases_ownership();
         std::cout << "PASS capture stream lifecycle\n";

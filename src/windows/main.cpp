@@ -4,6 +4,7 @@
 #include "windows/page_transition.h"
 #include "windows/ui_theme.h"
 #include "windows/diagnostics.h"
+#include "partymic_version.h"
 #include <algorithm>
 #include <cmath>
 #include <commctrl.h>
@@ -140,7 +141,18 @@ class App {
                         " music_frames=" + std::to_string(engine.music_frames()) + " rendered_frames=" + std::to_string(engine.rendered_frames()) +
                         " music_starved=" + std::to_string(engine.music_starved_frames()) + " mic_starved=" + std::to_string(engine.mic_starved_frames()) +
                         " dropped=" + std::to_string(engine.dropped_frames()) + " mic_discontinuities=" + std::to_string(engine.mic_discontinuities()) +
-                        " music_discontinuities=" + std::to_string(engine.music_discontinuities()) + " max_wake_us=" + std::to_string(engine.max_wake_gap_us()));
+                        " music_discontinuities=" + std::to_string(engine.music_discontinuities()) +
+                        " music_zero_frames=" + std::to_string(engine.music_zero_frames()) +
+                        " music_longest_zero_run=" + std::to_string(engine.music_longest_zero_run()) +
+                        " music_zero_runs=" + std::to_string(engine.music_zero_runs()) +
+                        " music_last_zero_run_frame=" + std::to_string(engine.music_last_zero_run_frame()) +
+                        " output_zero_frames=" + std::to_string(engine.output_zero_frames()) +
+                        " output_zero_runs=" + std::to_string(engine.output_zero_runs()) +
+                        " output_last_zero_run_frame=" + std::to_string(engine.output_last_zero_run_frame()) +
+                        " output_empty_wakes=" + std::to_string(engine.empty_render_wakes()) +
+                        " max_capture_drain_us=" + std::to_string(engine.max_capture_drain_us()) +
+                        " max_render_us=" + std::to_string(engine.max_render_us()) +
+                        " max_wake_us=" + std::to_string(engine.max_wake_gap_us()));
                     next_report = now + 15000;
                 }
                 Sleep(500);
@@ -476,7 +488,7 @@ class App {
         ui::line(dc, px(24), px(base), px(196), px(base), ui::border);
         ui::icon(dc, ui::Icon::Headphones, rect(26, base + 23, 18, 18, false), ui::teal);
         txt(L"本地音频 · 随时可控", 54, base + 19, 150, 26, small_font, ui::muted, false);
-        txt(L"PartyMic  0.5.6", 26, base + 67, 180, 24, small_font, ui::muted, false);
+        txt(L"PartyMic  " PARTYMIC_VERSION_W, 26, base + 67, 180, 24, small_font, ui::muted, false);
         const int delta = logical_width() - design_width;
         const wchar_t *titles[] = {L"混音工作台", L"录音与试听", L"使用指南"};
         const wchar_t *subtitles[] = {L"喜欢的音乐，和你的声音一起出发。",
@@ -1100,7 +1112,7 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lpar
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
-    diagnostics::start("0.5.6");
+    diagnostics::start(PARTYMIC_VERSION);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(initialized))

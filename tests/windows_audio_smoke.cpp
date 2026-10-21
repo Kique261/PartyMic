@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <iostream>
 #include <fcntl.h>
 #include <io.h>
@@ -98,11 +99,17 @@ int tone(double frequency, const wchar_t *event_name) {
     UINT32 capacity = 0;
     check(client->GetBufferSize(&capacity), "Test render capacity");
     check(client->Start(), "Tone start");
-    unsigned long long position = 0;
+    unsigned long long position = 0, empty_wakes = 0, max_wake_us = 0;
+    auto previous_wake = std::chrono::steady_clock::now();
     const auto deadline = GetTickCount64() + 120000;
     while (GetTickCount64() < deadline && WaitForSingleObject(stop.value, 3) == WAIT_TIMEOUT) {
+        const auto now = std::chrono::steady_clock::now();
+        max_wake_us = std::max(max_wake_us, static_cast<unsigned long long>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - previous_wake).count()));
+        previous_wake = now;
         UINT32 padding = 0;
         check(client->GetCurrentPadding(&padding), "Tone padding");
+        if (!padding && position) ++empty_wakes;
         const auto frames = capacity - padding;
         if (!frames)
             continue;
@@ -117,6 +124,10 @@ int tone(double frequency, const wchar_t *event_name) {
         check(render->ReleaseBuffer(frames, 0), "Tone release");
     }
     check(client->Stop(), "Tone stop");
+    diagnostics::write("test.tone.summary", "frequency=" + std::to_string(frequency) +
+        " empty_wakes=" + std::to_string(empty_wakes) + " max_wake_us=" + std::to_string(max_wake_us));
+    std::wcout << L"TONE frequency=" << frequency << L" frames=" << position
+        << L" empty_wakes=" << empty_wakes << L" max_wake_us=" << max_wake_us << std::endl;
     return 0;
 }
 struct MicState {
@@ -364,10 +375,51 @@ void report_engine(const AudioEngine &engine) {
                << L" empty_render_wakes=" << engine.empty_render_wakes()
                << L" music_discontinuities=" << engine.music_discontinuities()
                << L" mic_discontinuities=" << engine.mic_discontinuities()
-               << L" music_silent_frames=" << engine.music_silent_frames() << std::endl;
+               << L" music_silent_frames=" << engine.music_silent_frames()
+               << L" music_zero_frames=" << engine.music_zero_frames()
+               << L" music_longest_zero_run=" << engine.music_longest_zero_run()
+               << L" music_zero_runs=" << engine.music_zero_runs()
+               << L" music_last_zero_run_frame=" << engine.music_last_zero_run_frame() << std::endl;
+    std::wcout << L"WRITTEN output_zero_frames=" << engine.output_zero_frames()
+               << L" output_zero_runs=" << engine.output_zero_runs()
+               << L" output_last_zero_run_frame=" << engine.output_last_zero_run_frame() << std::endl;
     std::wcout << L"INPUT music_starved_frames=" << engine.music_starved_frames()
                << L" mic_starved_frames=" << engine.mic_starved_frames()
                << L" dropped_frames=" << engine.dropped_frames() << std::endl;
+}
+void await_running(AudioEngine& engine);
+AudioSelection selection_for(DWORD pid, const std::wstring& executable, std::wstring& capture);
+int continuity_test(unsigned cycles) {
+    require(cycles >= 1 && cycles <= 12, "Continuity cycles must be 1..12");
+    ChildTone source(997);
+    std::wstring capture;
+    const auto selection = selection_for(source.process.dwProcessId, L"windows_audio_smoke.exe", capture);
+    Sleep(700);
+    unsigned failures = 0;
+    for (unsigned cycle = 1; cycle <= cycles; ++cycle) {
+        AudioEngine engine;
+        MixSettings settings;
+        settings.music_gain = 1;
+        settings.mic_muted = true;
+        settings.ducking = false;
+        engine.settings(settings);
+        CableCapture reader(capture);
+        engine.start(selection);
+        await_running(engine);
+        const auto result = reader.settled_measure();
+        std::wcout << L"CYCLE number=" << cycle << std::endl;
+        report(L"continuity_music", result);
+        report_engine(engine);
+        const bool passed = result.frames > 48000 && result.amplitude(0) > 0.003 &&
+            result.longest_zero_run < 48 && result.discontinuities == 0 &&
+            engine.music_starved_frames() == 0 && engine.dropped_frames() == 0 && engine.active();
+        if (!passed) ++failures;
+        std::wcout << L"CYCLE_RESULT number=" << cycle << L" passed=" << passed << std::endl;
+        engine.stop();
+    }
+    source.finish();
+    require(failures == 0, "Repeated music capture has no >=1 ms gaps or input loss");
+    return 0;
 }
 void analyzer_check() {
     std::vector<float> samples(76800 * 2);
@@ -664,6 +716,8 @@ int wmain(int argc, wchar_t **argv) {
             return handoff_test();
         if (argc == 4 && std::wstring(argv[1]) == L"--tone")
             return tone(std::stod(argv[2]), argv[3]);
+        if (argc == 3 && std::wstring(argv[1]) == L"--continuity")
+            return continuity_test(static_cast<unsigned>(std::stoul(argv[2])));
         for (EDataFlow flow : {eRender, eCapture}) {
             std::wcout << (flow == eRender ? L"RENDER" : L"CAPTURE") << std::endl;
             for (const auto &e : endpoints(flow))
@@ -694,7 +748,7 @@ int wmain(int argc, wchar_t **argv) {
             return run();
         if (argc == 2 && std::wstring(argv[1]) == L"--fidelity")
             return fidelity_test();
-        std::wcout << L"Use --run, --fidelity, --soak 90, --diagnose 30, or --player cloudmusic.exe 60. No recordings."
+        std::wcout << L"Use --run, --fidelity, --continuity 6, --soak 90, --diagnose 30, or --player cloudmusic.exe 60. No recordings."
                    << std::endl;
         return 0;
     } catch (const std::exception &e) {

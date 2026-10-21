@@ -223,6 +223,8 @@ struct Stream {
     bool started = false;
     unsigned long long discontinuities = 0, silent_frames = 0;
     unsigned long long captured_frames = 0, signal_frames = 0;
+    unsigned long long zero_frames = 0, zero_run = 0, longest_zero_run = 0;
+    unsigned long long zero_runs = 0, last_zero_run_frame = 0;
     ~Stream() {
         if (started && render) {
             try { finish_render(); } catch (...) {}
@@ -309,11 +311,22 @@ struct Stream {
             if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) ++discontinuities;
             if (flags & AUDCLNT_BUFFERFLAGS_SILENT) silent_frames += frames;
             captured_frames += frames;
-            if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data) {
-                const auto* samples = reinterpret_cast<const float*>(data);
-                for (UINT32 i = 0; i < frames; ++i)
-                    if (std::abs(samples[i * channels]) > 0.00001f || std::abs(samples[i * channels + 1]) > 0.00001f)
-                        ++signal_frames;
+            const auto* samples = reinterpret_cast<const float*>(data);
+            for (UINT32 i = 0; i < frames; ++i) {
+                const bool silent = (flags & AUDCLNT_BUFFERFLAGS_SILENT) || !samples;
+                const float left = silent ? 0 : std::abs(samples[i * channels]);
+                const float right = silent ? 0 : std::abs(samples[i * channels + 1]);
+                if (left > 0.00001f || right > 0.00001f) ++signal_frames;
+                // Includes digital silence without Windows' SILENT flag.
+                // Per-frame arithmetic only; no allocation or log writes.
+                if (left < 1e-8f && right < 1e-8f) {
+                    ++zero_frames;
+                    longest_zero_run = std::max(longest_zero_run, ++zero_run);
+                    if (zero_run == sample_rate / 1000) {
+                        ++zero_runs;
+                        last_zero_run_frame = captured_frames - frames + i + 1 - zero_run;
+                    }
+                } else zero_run = 0;
             }
             queue.push(reinterpret_cast<const float*>(data), frames,
                 (flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0);
@@ -368,6 +381,9 @@ void AudioEngine::start(AudioSelection selection) {
     max_wake_gap_us_ = max_process_check_us_ = max_render_us_ = 0;
     max_capture_drain_us_ = startup_dropped_frames_ = empty_render_wakes_ = 0;
     music_discontinuities_ = mic_discontinuities_ = music_silent_frames_ = 0;
+    music_zero_frames_ = music_longest_zero_run_ = 0;
+    music_zero_runs_ = music_last_zero_run_frame_ = 0;
+    output_zero_frames_ = output_zero_runs_ = output_last_zero_run_frame_ = 0;
     render_buffer_frames_ = 0;
     mmcss_registered_ = false;
     set_status(L"正在初始化音频设备…");
@@ -418,6 +434,9 @@ void AudioEngine::run(AudioSelection selection) {
                 mic_queue.push(samples.data(), frames, samples.empty());
             };
             Mixer mixer;
+            unsigned long long output_zero_run = 0, output_zero_frames = 0;
+            unsigned long long output_zero_runs = 0, output_last_zero_run_frame = 0;
+            unsigned long long written_frames = 0;
             std::vector<float> music_samples(output.buffer_frames * channels);
             std::vector<float> mic_samples(output.buffer_frames * channels);
             music.start();
@@ -469,6 +488,10 @@ void AudioEngine::run(AudioSelection selection) {
                 music_discontinuities_ = music.discontinuities;
                 mic_discontinuities_ = microphone_stats.discontinuities;
                 music_silent_frames_ = music.silent_frames;
+                music_zero_frames_ = music.zero_frames;
+                music_longest_zero_run_ = music.longest_zero_run;
+                music_zero_runs_ = music.zero_runs;
+                music_last_zero_run_frame_ = music.last_zero_run_frame;
                 UINT32 padding = 0;
                 mark(Stage::padding);
                 check(output.client->GetCurrentPadding(&padding), "Read output padding");
@@ -492,7 +515,24 @@ void AudioEngine::run(AudioSelection selection) {
                 check(output.render->GetBuffer(frames, &data), "Acquire virtual cable output");
                 const auto levels = mixer.mix(m, v,
                     {reinterpret_cast<float*>(data), frames * channels}, controls);
+                // Match the independent observer's mono downmix. This lets a
+                // downstream silence gap be distinguished from samples we wrote.
+                const auto* mixed = reinterpret_cast<const float*>(data);
+                for (UINT32 i = 0; i < frames; ++i) {
+                    const double mono = (static_cast<double>(mixed[i * channels]) + mixed[i * channels + 1]) * 0.5;
+                    if (std::abs(mono) < 1e-8) {
+                        ++output_zero_frames;
+                        if (++output_zero_run == sample_rate / 1000) {
+                            ++output_zero_runs;
+                            output_last_zero_run_frame = written_frames + i + 1 - output_zero_run;
+                        }
+                    } else output_zero_run = 0;
+                }
                 check(output.render->ReleaseBuffer(frames, 0), "Write virtual cable output");
+                written_frames += frames;
+                output_zero_frames_ = output_zero_frames;
+                output_zero_runs_ = output_zero_runs;
+                output_last_zero_run_frame_ = output_last_zero_run_frame;
                 rendered_frames_ += frames;
                 update_max(max_render_us_, microseconds() - render_begin);
                 music_level_ = levels.music;
@@ -519,7 +559,20 @@ void AudioEngine::run(AudioSelection selection) {
     music_level_ = mic_level_ = output_level_ = 0;
     running_ = false;
     mark(Stage::released);
-    diagnostics::write("engine.stopped", "all_stream_scopes_released=1 mic_frames=" + std::to_string(mic_frames_.load()));
+    diagnostics::write("engine.stopped", "all_stream_scopes_released=1 mic_frames=" + std::to_string(mic_frames_.load()) +
+        " music_zero_frames=" + std::to_string(music_zero_frames_.load()) +
+        " music_longest_zero_run=" + std::to_string(music_longest_zero_run_.load()) +
+        " music_zero_runs=" + std::to_string(music_zero_runs_.load()) +
+        " music_last_zero_run_frame=" + std::to_string(music_last_zero_run_frame_.load()) +
+        " output_zero_frames=" + std::to_string(output_zero_frames_.load()) +
+        " output_zero_runs=" + std::to_string(output_zero_runs_.load()) +
+        " output_last_zero_run_frame=" + std::to_string(output_last_zero_run_frame_.load()) +
+        " output_empty_wakes=" + std::to_string(empty_render_wakes_.load()) +
+        " max_wake_us=" + std::to_string(max_wake_gap_us_.load()) +
+        " max_render_us=" + std::to_string(max_render_us_.load()) +
+        " music_starved=" + std::to_string(music_starved_frames_.load()) +
+        " mic_starved=" + std::to_string(mic_starved_frames_.load()) +
+        " dropped=" + std::to_string(dropped_frames_.load()));
     active_ = false;
 }
 } // namespace partymic

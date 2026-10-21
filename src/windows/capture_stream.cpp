@@ -31,7 +31,11 @@ SharedCaptureFormat capture_format(IAudioClient* client,DWORD flags,const char* 
             static constexpr GUID ieee_float={WAVE_FORMAT_IEEE_FLOAT,0,0x10,{0x80,0,0,0xaa,0,0x38,0x9b,0x71}};
             floating=IsEqualGUID(reinterpret_cast<WAVEFORMATEXTENSIBLE*>(native)->SubFormat,ieee_float);
         }
-        direct=floating&&native->nSamplesPerSec==48000&&native->nChannels==2&&
+        // Only copy descriptors whose declared size fits our owned storage.
+        // Extra driver bytes must not be advertised after a truncated copy.
+        const bool complete = (native->wFormatTag == WAVE_FORMAT_IEEE_FLOAT && native->cbSize == 0) ||
+            (native->wFormatTag == WAVE_FORMAT_EXTENSIBLE && native->cbSize == 22);
+        direct=complete&&floating&&native->nSamplesPerSec==48000&&native->nChannels==2&&
             native->wBitsPerSample==32&&native->nBlockAlign==8;
         if(direct) {
             if(native->wFormatTag==WAVE_FORMAT_EXTENSIBLE)result.storage=*reinterpret_cast<WAVEFORMATEXTENSIBLE*>(native);

@@ -52,6 +52,13 @@ public:
     unsigned long long music_discontinuities() const { return music_discontinuities_.load(); }
     unsigned long long mic_discontinuities() const { return mic_discontinuities_.load(); }
     unsigned long long music_silent_frames() const { return music_silent_frames_.load(); }
+    unsigned long long music_zero_frames() const { return music_zero_frames_.load(); }
+    unsigned long long music_longest_zero_run() const { return music_longest_zero_run_.load(); }
+    unsigned long long music_zero_runs() const { return music_zero_runs_.load(); }
+    unsigned long long music_last_zero_run_frame() const { return music_last_zero_run_frame_.load(); }
+    unsigned long long output_zero_frames() const { return output_zero_frames_.load(); }
+    unsigned long long output_zero_runs() const { return output_zero_runs_.load(); }
+    unsigned long long output_last_zero_run_frame() const { return output_last_zero_run_frame_.load(); }
     unsigned render_buffer_frames() const { return render_buffer_frames_.load(); }
     bool mmcss_registered() const { return mmcss_registered_.load(); }
 private:
@@ -75,6 +82,9 @@ private:
     std::atomic<unsigned long long> max_capture_drain_us_ = 0, startup_dropped_frames_ = 0, empty_render_wakes_ = 0;
     std::atomic<unsigned long long> music_discontinuities_ = 0, mic_discontinuities_ = 0;
     std::atomic<unsigned long long> music_silent_frames_ = 0;
+    std::atomic<unsigned long long> music_zero_frames_ = 0, music_longest_zero_run_ = 0;
+    std::atomic<unsigned long long> music_zero_runs_ = 0, music_last_zero_run_frame_ = 0;
+    std::atomic<unsigned long long> output_zero_frames_ = 0, output_zero_runs_ = 0, output_last_zero_run_frame_ = 0;
     std::atomic<unsigned> render_buffer_frames_ = 0;
     std::atomic<bool> mmcss_registered_ = false;
     mutable std::mutex mutex_;

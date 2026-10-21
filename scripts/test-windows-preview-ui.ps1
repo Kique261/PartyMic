@@ -1,6 +1,6 @@
 ﻿# Run explicitly on the signed-in desktop. Saves short local recordings; never packaged.
 param([Parameter(Mandatory=$true)][string]$Executable,[Parameter(Mandatory=$true)][string]$LogDirectory,
-      [Parameter(Mandatory=$true)][string]$AudioTestExecutable)
+      [Parameter(Mandatory=$true)][string]$AudioTestExecutable,[switch]$SyntheticOnly)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 Add-Type -AssemblyName System.Drawing
@@ -67,19 +67,25 @@ try {
  SetGain 106 0
  $silent=NewRecording 'mic_gain_zero' {Click 114;Start-Sleep -Seconds 2;Click 115}
  Require ($silent[0] -ge 1 -and $silent[1] -eq 0) 'Microphone recording honors zero gain'
- SetGain 106 100
+ SetGain 106 $(if($SyntheticOnly){0}else{100})
  $mic=NewRecording 'microphone_auto_stop' {Click 114;Start-Sleep -Seconds 16}
  Require ($mic[0] -eq 15 -and $mic[3] -eq 0) 'Microphone auto-stops at 15 seconds without clipping'
+ if($SyntheticOnly){Require ($mic[1] -eq 0) 'Synthetic-only run saves no microphone signal'}
  SetGain 106 0
  # Generate our own source so a paused music player cannot invalidate this test.
  $eventName='Local\PartyMicPreviewTone-'+$PID
  $toneEvent=[Threading.EventWaitHandle]::new($false,[Threading.EventResetMode]::ManualReset,$eventName)
  $tone=Start-Process -FilePath $AudioTestExecutable -ArgumentList @('--tone','997',$eventName) -WindowStyle Hidden -PassThru
  Start-Sleep -Seconds 1;Click 201;Click 101
- $combo=Control 102;$count=[PreviewProbe]::Send($combo,0x146,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32();$source=-1
- for($i=0;$i -lt $count;$i++){$text=[Text.StringBuilder]::new(4096);[void][PreviewProbe]::Read($combo,0x148,[IntPtr]$i,$text);if($text.ToString().Contains('windows_audio_smoke.exe')){$source=$i;break}}
- Require ($source -ge 0) 'Own synthetic audio source enumerated'
- SelectItem 102 $source
+ # Refresh is asynchronous: wait for the requested source, not an arbitrary UI delay.
+ $script:source=-1
+ WaitState {
+  $combo=Control 102;$count=[PreviewProbe]::Send($combo,0x146,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32()
+  for($i=0;$i -lt $count;$i++){$text=[Text.StringBuilder]::new(4096);[void][PreviewProbe]::Read($combo,0x148,[IntPtr]$i,$text);if($text.ToString().Contains('windows_audio_smoke.exe')){$script:source=$i;return $true}}
+  return $false
+ } 12 'Own synthetic audio source not enumerated after refresh'
+ Require ($script:source -ge 0) 'Own synthetic audio source enumerated'
+ SelectItem 102 $script:source
  Click 110
  WaitState {([PreviewProbe]::AllText($script:main)).Contains('正在混音')} 12 'Mixer failed to start'
  Click 202
@@ -101,7 +107,7 @@ try {
  Start-Sleep -Milliseconds 200
  $rect=[PreviewProbe+Rect]::new();[void][PreviewProbe]::GetWindowRect($script:main,[ref]$rect)
  $bitmap=[Drawing.Bitmap]::new($rect.Right-$rect.Left,$rect.Bottom-$rect.Top);$graphics=[Drawing.Graphics]::FromImage($bitmap);$dc=$graphics.GetHdc();[void][PreviewProbe]::PrintWindow($script:main,$dc,2);$graphics.ReleaseHdc($dc);$graphics.Dispose();$bitmap.Save((Join-Path $LogDirectory 'preview-ui.png'));$bitmap.Dispose()
- SelectItem 113 0;SetGain 106 100;SetGain 118 70
+ SelectItem 113 0;SetGain 106 $(if($SyntheticOnly){0}else{100});SetGain 118 70
  Click 114;Start-Sleep -Seconds 1
  [void][PreviewProbe]::PostMessage($script:main,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
  Require ($proc.WaitForExit(8000)) 'Closing window stops and saves recording cleanly'

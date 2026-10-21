@@ -6,7 +6,7 @@
 
 ## 下载与安装
 
-当前提供 **0.5.5 预览版**。下载 [PartyMic-0.5.5-Setup.exe](https://github.com/Kique261/PartyMic/releases/download/v0.5.5/PartyMic-0.5.5-Setup.exe)，双击并按向导完成安装，无需解压 ZIP。[发行页面](https://github.com/Kique261/PartyMic/releases/tag/v0.5.5) 提供版本说明与 SHA256 校验文件。
+当前提供 **0.5.6 预览版**。下载 [PartyMic-0.5.6-Setup.exe](https://github.com/Kique261/PartyMic/releases/download/v0.5.6/PartyMic-0.5.6-Setup.exe)，双击并按向导完成安装，无需解压 ZIP。[发行页面](https://github.com/Kique261/PartyMic/releases/tag/v0.5.6) 提供版本说明与 SHA256 校验文件。
 
 - 支持 **Windows 11 x64**，需要一个实体麦克风。
 - 安装到当前 Windows 账户，提供开始菜单、桌面快捷方式和卸载入口。
