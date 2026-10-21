@@ -65,6 +65,12 @@ ComPtr<IMMDevice> brio() {
     check(enumerator->GetDevice(id.c_str(), &device), "Brio device");
     return device;
 }
+ComPtr<IMMDevice> simulated_default_cable() {
+    for (const auto& endpoint : endpoints(eCapture))
+        if (endpoint.name.find(L"CABLE Output") != std::wstring::npos)
+            return device_by_id(endpoint.id, eCapture);
+    throw std::runtime_error("CABLE Output missing");
+}
 void state(bool include_format = true, IMMDevice* endpoint = nullptr) {
     ComPtr<IMMDevice> device = endpoint;
     if (!device) device = brio();
@@ -170,8 +176,7 @@ class Wasapi final : public Probe {
     ComPtr<IAudioClient> client;
     ComPtr<IAudioCaptureClient> capture;
 public:
-    explicit Wasapi(bool communications) {
-        auto device = brio();
+    explicit Wasapi(ComPtr<IMMDevice> device, bool communications) {
         check(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
             reinterpret_cast<void**>(client.GetAddressOf())), "Probe WASAPI activate");
         ComPtr<IAudioClient2> properties;
@@ -284,15 +289,21 @@ int wmain(int argc,wchar_t** argv) {
             if (seconds < 1 || seconds > 10) throw std::runtime_error("Snapshot duration must be 1..10 seconds");
             passive_meter(static_cast<unsigned>(seconds)); return 0;
         }
-        state();
-        if(argc==1)return 0;
-        if(argc!=3)throw std::runtime_error("Use [wavein|directsound|other|communications] seconds (1..30)");
+        if(argc==1){state();return 0;}
+        if(argc!=3)throw std::runtime_error("Use [wavein|directsound|other|communications|route] seconds (1..30)");
         const std::wstring method=argv[1];const auto seconds=std::stoi(argv[2]);
         if(seconds<1||seconds>30)throw std::runtime_error("Duration must be 1..30 seconds");
+        if(method!=L"route")state();
         std::unique_ptr<Probe> probe;
         if(method==L"wavein")probe=std::make_unique<WaveIn>();
         else if(method==L"directsound")probe=std::make_unique<DirectSound>();
-        else if(method==L"other"||method==L"communications")probe=std::make_unique<Wasapi>(method==L"communications");
+        else if(method==L"other"||method==L"communications")
+            probe=std::make_unique<Wasapi>(brio(),method==L"communications");
+        else if(method==L"route") {
+            std::wcout<<L"ROUTE displayed=Brio90 effective=CABLE_Output model=incident_replay"
+                <<L" actual_console_default="<<default_endpoint_id(eCapture,eConsole)<<std::endl;
+            probe=std::make_unique<Wasapi>(simulated_default_cable(),false);
+        }
         else throw std::runtime_error("Unknown capture API");
         std::wcout<<L"OPEN api="<<method<<L" tick="<<GetTickCount64()<<L" pid="<<GetCurrentProcessId()<<std::endl;
         const auto start=GetTickCount64();unsigned reported=0;Levels levels,total;
@@ -306,7 +317,7 @@ int wmain(int argc,wchar_t** argv) {
             Sleep(3);
         }
         probe->drain(levels);levels.report(method,unsigned(seconds));total.frames+=levels.frames;total.nonzero+=levels.nonzero;
-        probe.reset();state();
+        probe.reset();if(method!=L"route")state();
         std::wcout<<L"TOTAL frames="<<total.frames<<L" nonzero="<<total.nonzero<<std::endl;
         if(total.frames<static_cast<unsigned>(seconds)*8000ULL)throw std::runtime_error("Too few captured frames");
         std::wcout<<L"PASS packet delivery; signal audibility is not certified"<<std::endl;

@@ -3,8 +3,9 @@ param(
     [Parameter(Mandatory=$true)][string]$Application,
     [Parameter(Mandatory=$true)][string]$Probe,
     [string]$Music='cloudmusic.exe',
-    [ValidateSet('wavein','directsound','other','communications')]
+    [ValidateSet('wavein','directsound','other','communications','route')]
     [string[]]$Methods=@('wavein','directsound','other','communications'),
+    [switch]$PacketOnly,
     [Parameter(Mandatory=$true)][string]$LogDirectory
 )
 $ErrorActionPreference='Stop'
@@ -13,7 +14,10 @@ $exe=(Resolve-Path -LiteralPath $Application).Path
 $probeExe=(Resolve-Path -LiteralPath $Probe).Path
 New-Item -ItemType Directory -Path $LogDirectory -Force|Out-Null
 $root=(Resolve-Path -LiteralPath $LogDirectory).Path
-if(@(Get-Process PartyMic -ErrorAction SilentlyContinue).Count){throw 'Exit PartyMic before this opt-in test; existing processes are left untouched'}
+if($PacketOnly -and $Methods -contains 'route'){throw 'Route simulation requires its controlled tone, not packet-only checking'}
+if(@(Get-Process -Name 'PartyMic','PartyMic-*' -ErrorAction SilentlyContinue).Count){
+    throw 'Exit PartyMic before this opt-in test; existing processes are left untouched'
+}
 Add-Type @'
 using System;using System.Text;using System.Runtime.InteropServices;
 public static class HandoffUi {
@@ -105,7 +109,7 @@ function HoldPhase([string]$name){
     Start-Sleep -Milliseconds 2800
     @{name=$name;start=$start;end=[HandoffUi]::GetTickCount64()}
 }
-function Evaluate($phases,[string]$text){
+function Evaluate($phases,[string]$text,[string]$method,[bool]$packetOnly){
     $open=[regex]::Match($text,'OPEN api=\S+ tick=(\d+)')
     if(!$open.Success){throw 'Probe never opened'}
     $previous=[uint64]$open.Groups[1].Value
@@ -122,11 +126,20 @@ function Evaluate($phases,[string]$text){
         $samples=@($windows|Where-Object {$_.start -ge $phase.start+150 -and $_.end -le $phase.end -and $_.end-$_.start -ge 700})
         $verdict='pass'
         if(!$samples.Count){$verdict='inconclusive'}
-        elseif(@($samples|Where-Object {$_.frames -lt 8000 -or $_.nonzero -eq 0}).Count){$verdict='fail'}
+        elseif($method -eq 'route'){
+            $shouldHaveSignal=$phase.name -in @('mixing','restarted','reopened')
+            if($shouldHaveSignal){
+                if(@($samples|Where-Object {$_.frames -lt 8000 -or $_.rms -lt 0.001}).Count){$verdict='fail'}
+            }elseif(@($samples|Where-Object {$_.frames -lt 8000 -or $_.rms -gt 0.0001}).Count){$verdict='fail'}
+        }
+        elseif($packetOnly){
+            if(@($samples|Where-Object {$_.frames -lt 8000}).Count){$verdict='fail'}
+        }
+        elseif(@($samples|Where-Object {$_.frames -lt 8000 -or $_.rms -lt 0.0001}).Count){$verdict='fail'}
         @{phase=$phase.name;verdict=$verdict;windows=$samples}
     })
     $baseline=$reports[0]
-    if($baseline.verdict -ne 'pass'){throw 'No valid microphone signal baseline while mixing; not a handoff verdict'}
+    if($baseline.verdict -ne 'pass'){throw 'No valid signal baseline while mixing; not a handoff verdict'}
     $reports
 }
 try{
@@ -163,13 +176,16 @@ try{
         [IO.File]::WriteAllText((Join-Path $root ($method+'.err')),$stderr.Result,[Text.UTF8Encoding]::new($false))
         if($script:mic.ExitCode -ne 0){throw ('Probe failure: '+$method)}
         [IO.File]::WriteAllText((Join-Path $root ($method+'-phases.json')),($phases|ConvertTo-Json -Depth 4),[Text.UTF8Encoding]::new($false))
-        $reports=@(Evaluate $phases $text)
-        $results.Add(@{method=$method;phases=$phases;reports=$reports;scope='Independent client signal activity only; LOL and speech quality unverified'})
+        $reports=@(Evaluate $phases $text $method $PacketOnly.IsPresent)
+        $scope=if($PacketOnly){'Packet delivery only; speech audibility and LOL unverified'}
+            elseif($method -eq 'route'){'Injected CABLE route with synthetic tone; LOL unverified'}
+            else{'Independent microphone signal above noise floor; LOL unverified'}
+        $results.Add(@{method=$method;phases=$phases;reports=$reports;scope=$scope})
         [IO.File]::WriteAllText((Join-Path $root 'results.json'),($results|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
         $script:mic.Dispose();$script:mic=$null
         if(@($reports|Where-Object {$_.verdict -ne 'pass'}).Count){throw ('Handoff signal check failed or inconclusive: '+$method)}
     }
-    'PASS independent microphone activity across GUI stop, restart and full process exit'|Set-Content -Encoding UTF8 (Join-Path $root 'result.txt')
+    'PASS requested independent capture checks across GUI stop, restart and full process exit'|Set-Content -Encoding UTF8 (Join-Path $root 'result.txt')
 }catch{
     ($_|Out-String)|Set-Content -Encoding UTF8 (Join-Path $root 'result.txt')
     throw
